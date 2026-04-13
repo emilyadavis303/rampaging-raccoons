@@ -1,14 +1,14 @@
 ---
-allowed-tools: Bash(gh pr diff:*), Bash(gh pr view:*), Bash(gh api:*), Bash(cat <<*), Bash(wc *), Read, Glob, Grep, Agent, AskUserQuestion
+allowed-tools: Bash(gh pr diff:*), Bash(gh pr view:*), Bash(gh api:*), Bash(cat <<*), Bash(wc *), Bash(python3 *), Read, Glob, Grep, Agent, AskUserQuestion
 argument-hint: <pr-number>
-description: Multi-perspective PR review — dispatches 6 raccoon agents in parallel, merges findings, posts one GitHub review
+description: Multi-perspective PR review — dispatches 8 raccoon agents in parallel, merges findings, posts one GitHub review
 ---
 
 # Rampaging Raccoons
 
 Print: *"🦝 Releasing the raccoons on PR #$ARGUMENTS..."*
 
-Multi-perspective code review that dispatches 6 parallel agents, each with a
+Multi-perspective code review that dispatches 8 parallel agents, each with a
 distinct personality and focus area. Findings are merged, deduplicated, and
 posted as one GitHub review with inline comments.
 
@@ -18,19 +18,47 @@ git context to resolve the repo.
 
 ## Step 1: Gather
 
-### PR metadata
+Run the gather operations in **two batches**. Batch A operations are all
+independent — run them in parallel. Batch B depends on Batch A results.
 
-!`gh pr view $ARGUMENTS --json title,body,author,headRefName,baseRefName,additions,deletions,changedFiles,number --jq '.'`
+### Batch A — run these in parallel
 
-### Diff
+**1. PR metadata**
 
-Save the diff to a temp file for reliable handling of large PRs:
+```bash
+gh pr view $ARGUMENTS --json title,body,author,headRefName,baseRefName,additions,deletions,changedFiles,number --jq '.'
+```
+
+**2. Diff fetch**
 
 ```bash
 gh pr diff $ARGUMENTS > /tmp/raccoons-diff-$ARGUMENTS.patch
 ```
 
-**Noise reduction** — strip these patterns from the saved diff before passing
+**3. Existing inline comments**
+
+```bash
+gh api repos/{owner}/{repo}/pulls/$ARGUMENTS/comments --jq '.[] | "\(.path):\(.line // .original_line) — \(.body[0:120])"'
+```
+
+**4. Existing review-level comments**
+
+```bash
+gh pr view $ARGUMENTS --json reviews --jq '.reviews[] | "\(.author.login) (\(.state)): \(.body[0:200])"'
+```
+
+**5. Repo conventions** — read the repo's `CLAUDE.md` if it exists at the repo
+root.
+
+**6. Custom engineer context** — check if
+`~/.claude/skills/rampaging-raccoons/my-context.md` has non-comment content. If
+so, read and include it.
+
+### Batch B — after Batch A completes
+
+These depend on the diff fetched in Batch A.
+
+**7. Noise reduction** — strip these patterns from the saved diff before passing
 to agents:
 - Lockfiles: `Gemfile.lock`, `go.sum`, `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`
 - Schema dumps: `db/structure.sql`
@@ -39,50 +67,25 @@ to agents:
 
 Read the cleaned diff from the temp file. For diffs over ~8000 lines, split by
 file boundary (`diff --git` markers) and distribute relevant sections to each
-agent based on their focus area rather than sending the entire diff to all 6.
+agent based on their focus area rather than sending the entire diff to all.
 
-### Diff line map
-
-After reading the diff, build a **line map** — a lookup of which line numbers
-in each file are actually present in the diff. This is used in Step 3 to
-validate findings before posting (see "Validate line numbers" in Step 5).
+**8. Diff line map** — build a **line map** from the cleaned diff: a lookup of
+which line numbers in each file are actually present in the diff. This is used
+in Step 6 to validate findings before posting.
 
 The map is derived from the `@@` hunk headers. For each `+` line in the diff,
 record the file path and line number. Only lines that appear in this map are
 valid targets for inline review comments.
 
-### Diff size check
-
-Count lines of the cleaned diff. If over **1500 lines**, print:
+**9. Diff size check** — count lines of the cleaned diff. If over **1500
+lines**, print:
 
 > ⚠️ Heads up — this is a big diff (~N lines). Findings may be noisier than usual.
 
 Then proceed normally.
 
-### Existing review comments
-
-Fetch existing comments to avoid duplicating feedback:
-
-```bash
-gh api repos/{owner}/{repo}/pulls/$ARGUMENTS/comments --jq '.[] | "\(.path):\(.line // .original_line) — \(.body[0:120])"'
-```
-
-```bash
-gh pr view $ARGUMENTS --json reviews --jq '.reviews[] | "\(.author.login) (\(.state)): \(.body[0:200])"'
-```
-
-### Repo conventions
-
-Read the repo's `CLAUDE.md` if it exists at the repo root.
-
-### Custom engineer context
-
-Check if `~/.claude/skills/rampaging-raccoons/my-context.md` has non-comment
-content. If so, read and include it.
-
-### Language detection
-
-Examine file extensions in the diff and detect languages:
+**10. Language detection** — examine file extensions in the diff and detect
+languages:
 
 | Extensions | Language file |
 |---|---|
@@ -97,15 +100,98 @@ Read all matching language hint files from
 
 Multiple languages per PR are expected — read all that match.
 
-## Step 2: Dispatch
+## Step 2: Triage
 
-Launch **6 parallel agents** (all as background agents using the Agent tool),
-one for each perspective. Each agent receives the same context payload
-constructed by the orchestrator.
+Run a fast Haiku classification on the cleaned diff to determine change type and
+inform agent dispatch. This should take ~3-5 seconds.
+
+### Classify
+
+Launch an Agent with `model: "haiku"` using the prompt from
+`~/.claude/skills/rampaging-raccoons/triage-prompt.md`, passing in the PR
+title, description, and cleaned diff. The agent returns a JSON object:
+
+```json
+{
+  "change_type": "mechanical | additive | mutative",
+  "modified_identifiers": ["ClassName#method_name"],
+  "reasoning": "one sentence"
+}
+```
+
+Print the result:
+
+> 🔍 Triage: **<change_type>** — <reasoning>
+
+### Blast radius scan (mutative only)
+
+When triage returns `mutative` with `modified_identifiers`:
+
+1. For each identifier, grep the repo for callers/includers (exclude the changed
+   files themselves, exclude `vendor/`, `node_modules/`, generated files)
+2. Collect file paths + line numbers + the calling line as context
+3. Cap at **5 callers per identifier**. If more exist, add:
+   `... and N more callers`
+4. Format as a "Downstream Dependencies" section to inject into agent prompts:
+
+```
+## Downstream Dependencies
+
+### `User#eligible_for_billing?` (modified)
+- app/services/billing_service.rb:88 — BillingService#process
+- app/services/sponsorship_manager.rb:23 — SponsorshipManager#discard
+- app/jobs/rea_downgrade_job.rb:15 — ReaDowngradeJob#perform
+... and 4 more callers
+```
+
+If triage returns `mechanical` or `additive`, skip the blast radius scan.
+
+## Step 3: Dispatch
+
+Dispatch raccoon agents based on the triage result from Step 2. Each agent runs
+as a background Agent call with `run_in_background: true`.
+
+### Tiered dispatch
+
+| Change type | Raccoons dispatched | Rationale |
+|------------|-------------------|-----------|
+| **Mutative** | All 8 (full rampage) | Changing existing behavior — maximum scrutiny |
+| **Additive** | Chaos Carol, The Oracle, Inspector Bandit, Cranky Hank, Nosy, Squinty (6) | New code needs correctness, maintainability, scope, architecture, observability, and test quality — less need for nit/clarity review |
+| **Mechanical** | Chaos Carol, Inspector Bandit (2) | Sanity check: does it break anything? Does it match the description? |
+
+Print which squad is deploying:
+
+> 🦝 Deploying **N raccoons** (<names>) for a **<change_type>** change.
+
+### The 8 agents
+
+| # | Agent | File | Tag |
+|---|-------|------|-----|
+| 1 | Nit Pickles | `agents/nit-pickles.md` | `🥒 Nit Pickles` |
+| 2 | Chaos Carol | `agents/chaos-carol.md` | `🌪️ Chaos Carol` |
+| 3 | Cranky Hank | `agents/cranky-hank.md` | `🥃 Cranky Hank` |
+| 4 | Lil' Whiskers | `agents/lil-whiskers.md` | `🔦 Lil' Whiskers` |
+| 5 | The Oracle | `agents/the-oracle.md` | `🔮 The Oracle` |
+| 6 | Inspector Bandit | `agents/inspector-bandit.md` | `🚧 Inspector Bandit` |
+| 7 | Nosy | `agents/nosy.md` | `📟 Nosy` |
+| 8 | Squinty | `agents/squinty.md` | `🧪 Squinty` |
+
+### Diff content for agents
+
+**Always pass the actual cleaned diff content to agents, not a summary.** Agents
+reviewing summaries hallucinate details — they fill in code they haven't seen
+and generate false findings. The actual diff is the source of truth.
+
+For diffs under ~4000 lines, pass the full cleaned diff to every agent. For
+larger diffs, split by file boundary and give each agent the sections relevant
+to their focus area. Only summarize as a last resort for truly massive diffs
+(8000+ lines), and when you do, flag in the prompt that the agent is working
+from a summary and should not assume details not explicitly stated.
 
 ### Agent prompt template
 
-Construct each agent's prompt as follows:
+Read each dispatched agent's file from
+`~/.claude/skills/rampaging-raccoons/agents/` and construct its prompt:
 
 ```
 You are a code reviewer looking at PR #<number>: "<title>" by <author>.
@@ -126,6 +212,10 @@ You are a code reviewer looking at PR #<number>: "<title>" by <author>.
 
 <contents of my-context.md, or omit this section if no custom context>
 
+## Downstream Dependencies
+
+<blast radius output from Step 2, or omit this section if not mutative>
+
 ## Existing Review Comments
 
 These comments have already been left on this PR. Do NOT duplicate any of them:
@@ -134,7 +224,7 @@ These comments have already been left on this PR. Do NOT duplicate any of them:
 
 ## The Diff
 
-<cleaned diff content>
+<actual cleaned diff content — not a summary>
 
 ## Output Format
 
@@ -151,7 +241,7 @@ Only emit findings with real substance. If the code looks good from your
 perspective, emit:
 
 POSITIVE:
-description: <what was done well>
+description: <what was done well, written in your voice>
 
 Rules:
 - Do not pad output or add preamble
@@ -161,25 +251,20 @@ Rules:
 - Do not duplicate issues already covered in existing review comments
 - Be concrete: reference specific files and lines
 - When suggesting a fix, write actual code, not descriptions of code
-- Your tag MUST include the emoji — e.g. [👻 Ghost Agent] not [Ghost Agent]
+- Your tag MUST include the emoji — e.g. [🔮 The Oracle] not [The Oracle]
+- Write your POSITIVE blocks in character — your voice, not a generic compliment
+- Verify before you emit: confirm the line you're citing actually says what you
+  claim. If the diff was summarized, work only from what's explicitly stated —
+  never fill in code details you haven't seen
+- Be decisive: if you're unsure about a finding after one look, skip it. Do not
+  talk yourself in circles or hedge with "wait, actually..."
+- Quality over quantity: every finding should survive scrutiny. If you wouldn't
+  bet on it, don't ship it
 ```
 
-### The 6 agents
+Launch all selected agents as background Agent calls. Wait for all to complete.
 
-| # | Agent | File | Tag |
-|---|-------|------|-----|
-| 1 | Nit Pickles | `agents/nit-pickles.md` | `🧹 Nit Pickles` |
-| 2 | Chaos Carl | `agents/chaos-carl.md` | `💥 Chaos Carl` |
-| 3 | Old Man Grizzle | `agents/old-man-grizzle.md` | `🪨 Old Man Grizzle` |
-| 4 | Lil' Blinky | `agents/lil-blinky.md` | `👀 Lil' Blinky` |
-| 5 | Ghost Agent | `agents/ghost-agent.md` | `👻 Ghost Agent` |
-| 6 | Inspector Bandit | `agents/inspector-bandit.md` | `🚧 Inspector Bandit` |
-
-Read each agent file from `~/.claude/skills/rampaging-raccoons/agents/` and
-inject its contents into the prompt template above. Launch all 6 as background
-Agent calls with `run_in_background: true`. Wait for all to complete.
-
-## Step 3: Merge
+## Step 4: Merge
 
 After all agents return:
 
@@ -188,18 +273,25 @@ After all agents return:
 
 2. **Deduplicate** — if two findings reference the same file and same line
    (within ±3 lines) and describe the same underlying issue, keep the
-   better-written one. Merge their tags (e.g., `💥 Chaos Carl · 👻 Ghost Agent`).
-   If all 6 raccoons flag the same issue, use: `All six raccoons 🧹💥🪨👀👻🚧`
+   better-written one. Merge their tags (e.g., `🌪️ Chaos Carol · 🔮 The Oracle`).
+   If all 8 raccoons flag the same issue, use: `All eight raccoons 🥒🌪️🥃🔦🔮🚧📟🧪`
 
 3. **Strip existing** — remove findings that substantially overlap with existing
    review comments fetched in Step 1.
 
-4. **Sort by importance** — flat list, most important first. Correctness and
+4. **Verify claims** — for each remaining finding, spot-check that the claim
+   matches the actual diff. Read the cited `file:line` in the diff and confirm
+   the finding describes what's actually there. Drop findings where the agent
+   hallucinated code that doesn't exist, described behavior opposite to what the
+   code does, or referenced lines/constructs not present in the diff. This step
+   is cheap and catches the most common agent failure mode.
+
+5. **Sort by importance** — flat list, most important first. Correctness and
    security issues → design and architecture → clarity and maintainability → nits.
 
-5. **Collect positives** — gather `POSITIVE:` blocks for the review summary.
+6. **Collect positives** — gather `POSITIVE:` blocks for the review summary.
 
-## Step 4: Confirm
+## Step 5: Confirm
 
 Present the merged findings in the terminal, numbered:
 
@@ -208,15 +300,15 @@ Present the merged findings in the terminal, numbered:
 worth chattering about.
 
 1. `path/to/file.rb:42` — Thoughts on renaming this...
-   — 🧹 Nit Pickles
+   — 🥒 Nit Pickles
 2. `path/to/handler.go:88` — What happens when ctx is nil here?
-   — 💥 Chaos Carl
+   — 🌪️ Chaos Carol
 3. `path/to/service.rb:15` — This adds a service object for a single method call...
-   — 🪨 Old Man Grizzle · 👻 Ghost Agent
+   — 🥃 Cranky Hank · 🔮 The Oracle
 
 The good stuff 🗑️✨
-- Clean error handling in the new service object
-- Good test coverage on edge cases
+- Chaos Carol threw everything at the error handling and nothing broke. She's furious.
+- Lil' Whiskers understood the entire flow on the first read. That basically never happens.
 ```
 
 Use AskUserQuestion with these options:
@@ -226,7 +318,7 @@ Use AskUserQuestion with these options:
   remaining findings, then ask again
 - **Bail** — nothing posted, done
 
-## Step 5: Post
+## Step 6: Post
 
 ### Validate line numbers
 
@@ -289,24 +381,39 @@ worth chattering about.
 
 Guidelines for the summary:
 - **Opener:** Vary the verb — "rummaged through", "tore into", "got their paws
-  on", "dug through the trash of", "raided". Keep it one sentence.
-- **Positives:** These are genuine compliments, not filler. Write them with
-  enthusiasm — raccoons get excited when they find good stuff in the trash.
+  on", "dug through the trash of", "raided", "descended upon", "went through
+  every pocket of", "shook down". Keep it one sentence.
+- **Positives:** Write through the lens of whichever raccoon(s) identified them.
+  These are genuine compliments, not filler — but filtered through personality.
+  Examples:
+  - "Chaos Carol threw everything at the error handling and nothing broke. She's furious."
+  - "Cranky Hank looked at this service object and just nodded slowly. That's the highest praise he gives."
+  - "Lil' Whiskers understood the entire flow on the first read. That basically never happens."
+  - "The Oracle checked the future timeline and this code is still standing. Grudging respect."
+  - "Nit Pickles went through this twice looking for something to rearrange and came up empty."
   Skip generic praise ("good code"). Call out *specific* things done well.
-- **Closer:** Optional. One short raccoon-flavored line. Examples:
-  - "Now if you'll excuse us, there's a dumpster behind the CI server that
-    needs investigating."
-  - "The lid was on tight but we got in anyway."
-  - "We'll be back. We always come back."
-  - Don't reuse these — write a fresh one each time.
+- **Cross-reactions:** When multiple raccoons flag the same line, add a brief
+  reaction in the summary: "Chaos Carol and The Oracle both had concerns about
+  line 42 — when those two agree, pay attention."
+- **Zero findings:** When raccoons return zero findings, be suspicious:
+  "We couldn't find anything. We don't trust it. We'll be back."
+- **Closer:** Optional. One short raccoon-flavored line. Write a fresh one each
+  time — vary based on context:
+  - Friday PRs: "Submitted on a Friday. Bold. We respect it."
+  - Late-night PRs: "Timestamped after midnight. We see you."
+  - Tiny PRs: "Small PR, clean diff. Our favorite kind of trash."
+  - Huge PRs: "We're going to need a bigger dumpster."
+  - General: "Now if you'll excuse us, there's a dumpster behind the CI server
+    that needs investigating." / "The lid was on tight but we got in anyway." /
+    "We'll be back. We always come back."
 - **Don't overdo it.** The personality is seasoning, not the meal. The positives
   and finding count are the substance.
 
 ### Comment formatting
 
 Each posted inline comment includes:
-- A byline with the perspective tag(s) (e.g., `— 🧹 Nit Pickles` or
-  `— 💥 Chaos Carl · 👻 Ghost Agent`) so the PR author knows which raccoon(s)
+- A byline with the perspective tag(s) (e.g., `— 🥒 Nit Pickles` or
+  `— 🌪️ Chaos Carol · 🔮 The Oracle`) so the PR author knows which raccoon(s)
   flagged it
 - Conversational finding text
 - GitHub ```suggestion block when the finding includes a concrete code fix
@@ -326,12 +433,12 @@ Each posted inline comment includes:
 When invoked from `/raccoons-watch` or with `--auto`, run the review without
 human confirmation:
 
-- Execute Steps 1, 2, and 3 normally
-- **Skip Step 4 entirely** — no terminal preview, no AskUserQuestion
-- Execute Step 5 — post all merged findings directly to GitHub
+- Execute Steps 1–4 normally
+- **Skip Step 5 entirely** — no terminal preview, no AskUserQuestion
+- Execute Step 6 — post all merged findings directly to GitHub
 - Return the review URL to the caller
 
-Auto mode runs all 6 raccoons with no filtering. Every finding gets posted.
+Auto mode uses tiered dispatch (same as interactive). Every finding gets posted.
 
 ## Global Rules
 

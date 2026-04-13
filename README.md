@@ -1,22 +1,33 @@
 # Rampaging Raccoons
 
-Multi-perspective PR review skill for [Claude Code](https://claude.com/claude-code). Dispatches 6 parallel agents — each with a distinct personality and focus area — merges and deduplicates their findings, and posts one unified GitHub review with inline comments.
+Multi-perspective PR review skill for [Claude Code](https://claude.com/claude-code). Triage classifies the change, dispatches a tiered squad of raccoon agents in parallel — each with a distinct personality and focus area — merges and deduplicates their findings, and posts one unified GitHub review with inline comments.
 
-## The Raccoons
+## The raccoons
 
 | Character | Focus |
 |-----------|-------|
-| Nit Pickles | Style, naming, inconsistency, dead code |
-| Chaos Carl | Edge cases, error handling, security, data integrity |
-| Old Man Grizzle | Over/under-engineering, pattern violations, scope creep |
-| Lil' Blinky | Clarity, naming, implicit assumptions, missing context |
-| Ghost Agent | Maintainability, missing tests, fragile assumptions |
-| Inspector Bandit | PR description vs diff alignment, scope, missing pieces |
+| 🥒 **Nit Pickles**<br>*"Not to be that raccoon, but..."* | Style, inconsistency, dead code, leftover TODOs |
+| 🌪️ **Chaos Carol**<br>*"Now here's where it gets fun."* | Edge cases, error handling, security, data integrity, distributed-system semantics |
+| 🥃 **Cranky Hank**<br>*"Sure, fine — but at what cost?"* | Cost/benefit — over/under-engineering, pattern violations, dependency coupling, realistic-scale performance |
+| 🔦 **Lil' Whiskers**<br>*"My flashlight can't find the why here."* | Clarity, self-explaining names, confusing control flow, implicit assumptions |
+| 🔮 **The Oracle**<br>*"I've seen how this ends."* | Agentic-first maintainability — PR/commit context, durable repo knowledge, what survives when only the code remains |
+| 🚧 **Inspector Bandit**<br>*"Something doesn't add up here."* | PR description vs diff alignment, scope, missing pieces |
+| 📟 **Nosy**<br>*"Okay, it's 3am, the alert fires. What do I see?"* | Observability — the 3am test, logs, traces, error context, alerts |
+| 🧪 **Squinty**<br>*"So much green, so little confidence."* | Tests-as-code — does this test prove what it claims? |
+
+## Tiered dispatch
+
+A fast Haiku triage pass classifies the change before the rampage begins, so the squad scales to the work:
+
+| Change type | Raccoons dispatched |
+|-------------|---------------------|
+| Mutative (changes existing behavior) | All 8 — full rampage, plus a blast-radius scan for downstream callers |
+| Additive (new code only) | Chaos Carol, The Oracle, Inspector Bandit, Cranky Hank, Nosy, Squinty |
+| Mechanical (renames, formatting, moves) | Chaos Carol, Inspector Bandit |
 
 ## Install
 
 ```bash
-# Clone into your Claude Code skills directory
 git clone https://github.com/emilyadavis303/rampaging-raccoons.git ~/.claude/skills/rampaging-raccoons
 ```
 
@@ -24,18 +35,21 @@ git clone https://github.com/emilyadavis303/rampaging-raccoons.git ~/.claude/ski
 
 From inside any repo directory:
 
-```
+```text
 /rampaging-raccoons <pr-number>
 ```
 
-## Custom Context
+For unattended mode (no preview, post directly), invoke via `/raccoons-watch` or pass `--auto`.
+
+## Custom context
 
 Create `~/.claude/skills/rampaging-raccoons/my-context.md` to inject your own review context (team conventions, personal focus areas, Obsidian notes, etc.). If it exists, it's automatically included in every agent's prompt.
 
-## Adding Languages
+## Adding languages
 
-Drop a new `.md` file in `languages/` to add language-specific review patterns. The orchestrator auto-detects languages from file extensions in the diff.
+Drop a new `.md` file in `languages/` to add language-specific review patterns. The orchestrator auto-detects languages from file extensions in the diff. Built-in coverage: Ruby, Go, Python, Terraform, CI/CD configs.
 
-## Adding Raccoons
 
-Drop a new `.md` file in `agents/` to add a perspective. Remove one to retire it.
+## Adding raccoons
+
+Drop a new `.md` file in `agents/` to add a perspective. Remove one to retire it. Update the tiered dispatch table in `SKILL.md` if the new raccoon should join a specific squad.
