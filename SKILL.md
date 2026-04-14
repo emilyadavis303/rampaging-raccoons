@@ -1,5 +1,5 @@
 ---
-allowed-tools: Bash(gh pr diff:*), Bash(gh pr view:*), Bash(gh api:*), Bash(cat <<*), Bash(wc *), Bash(python3 *), Read, Glob, Grep, Agent, AskUserQuestion
+allowed-tools: Bash(gh pr diff:*), Bash(gh pr view:*), Bash(gh api:*), Bash(cat <<*), Bash(wc *), Bash(python3 *), Bash(rm /tmp/raccoons-review-response-*), Read, Write, Glob, Grep, Agent, AskUserQuestion
 argument-hint: <pr-number>
 description: Multi-perspective PR review — dispatches 8 raccoon agents in parallel, merges findings, posts one GitHub review
 ---
@@ -260,6 +260,14 @@ Rules:
   talk yourself in circles or hedge with "wait, actually..."
 - Quality over quantity: every finding should survive scrutiny. If you wouldn't
   bet on it, don't ship it
+- **Do NOT post to GitHub.** You are one of several parallel agents. Only emit
+  FINDING: and POSITIVE: blocks. The orchestrator merges, deduplicates, and
+  posts a single unified review. If you post directly, your findings will
+  appear as a separate rogue review alongside the merged one
+- **Brevity:** 1–2 sentences, ~40 words max per finding body. One punch, optional
+  one-line follow-up. Personality lives in the phrasing, not in extra sentences.
+  No paragraph monologues. If you can't say it in two sentences, the finding
+  isn't sharp enough — cut or skip
 ```
 
 Launch all selected agents as background Agent calls. Wait for all to complete.
@@ -286,10 +294,52 @@ After all agents return:
    code does, or referenced lines/constructs not present in the diff. This step
    is cheap and catches the most common agent failure mode.
 
-5. **Sort by importance** — flat list, most important first. Correctness and
+   **Brevity pass:** while you're already in each finding body, trim wordiness.
+   Target: 1–2 sentences, ~40 words. If a finding runs longer, compress it
+   without losing the punch — keep the personality, drop the throat-clearing.
+   If it can't be compressed without losing substance, the finding is probably
+   two findings glued together — split or drop the weaker half.
+
+5. **Fingerprint** — for each remaining finding, generate a normalized issue
+   token set used by `/raccoons-watch` to correlate findings across re-reviews.
+
+   Launch one Agent with `model: "haiku"` and pass it all surviving finding
+   bodies in a single batched prompt. Ask it to return a JSON array, one entry
+   per finding, each with 4–8 kebab-case tokens describing the *kind* of issue
+   (not the specific identifier names). Examples:
+
+   - `["nil-template-identifier", "no-validation", "silent-passthrough"]`
+   - `["compact-vs-compact-blank", "behavior-change", "filter-semantics"]`
+   - `["test-passes-for-wrong-reason", "hardcoded-default-value"]`
+
+   Tokens should be stable across phrasings of the same concern. Do NOT include
+   raccoon names, file paths, or line numbers in the tokens.
+
+   Attach the token list to each finding as `fingerprint_tokens`. Also derive
+   and attach `file_basename` (just the filename, no path). Assign each finding
+   a stable `id` of the form `f_001`, `f_002`, ... in sort order.
+
+   If the Haiku call fails or returns malformed JSON, fall back to an empty
+   token list — findings still post normally; only re-review correlation is
+   degraded.
+
+6. **Sort by importance** — flat list, most important first. Correctness and
    security issues → design and architecture → clarity and maintainability → nits.
 
-6. **Collect positives** — gather `POSITIVE:` blocks for the review summary.
+7. **Verdict** — determine whether any findings should block merge.
+
+   Walk the sorted list. If any finding is in the **correctness or security**
+   tier (unhandled errors, data integrity, race conditions, missing
+   validation at system boundaries), the verdict is `blocking` and the
+   `blocking_summary` is a one-liner describing the top such finding.
+
+   If all findings are architecture, clarity, or nits, the verdict is `clean`.
+
+   Zero findings → verdict is `clean`.
+
+   This is a quick classification you make during the sort, not an LLM call.
+
+8. **Collect positives** — gather `POSITIVE:` blocks for the review summary.
 
 ## Step 5: Confirm
 
@@ -343,10 +393,11 @@ invalid.
 gh api repos/{owner}/{repo}/pulls/$ARGUMENTS --jq '.head.sha'
 ```
 
-Post a single GitHub review:
+Post a single GitHub review. Capture the full response (not just the URL) so
+the per-comment IDs are available for the auto-mode emission step:
 
 ```bash
-cat <<'PAYLOAD' | gh api repos/{owner}/{repo}/pulls/$ARGUMENTS/reviews -X POST --input - --jq '.html_url'
+cat <<'PAYLOAD' | gh api repos/{owner}/{repo}/pulls/$ARGUMENTS/reviews -X POST --input - > /tmp/raccoons-review-response-$ARGUMENTS.json
 {
   "commit_id": "<HEAD_SHA>",
   "event": "COMMENT",
@@ -361,6 +412,31 @@ cat <<'PAYLOAD' | gh api repos/{owner}/{repo}/pulls/$ARGUMENTS/reviews -X POST -
 }
 PAYLOAD
 ```
+
+The response includes the review `id` and `html_url`. To get per-comment IDs
+for the inline comments just posted, fetch them by review id:
+
+```bash
+gh api repos/{owner}/{repo}/pulls/$ARGUMENTS/reviews/<review_id>/comments
+```
+
+**Match by body prefix, not by line.** The `/reviews/<id>/comments` endpoint
+returns `path`, `position`, and `original_position` — but **no `line` field**.
+Don't rely on `(path, line)` matching: it will silently fail to match and you'll
+lose every `comment_id` to null.
+
+Match each returned comment back to its source finding by:
+1. `c["path"] == finding["file"]`, AND
+2. `c["body"].startswith(finding["body"][:80])` (the body verbatim is the most
+   reliable signal — you posted these comments yourself a moment ago).
+
+If multiple findings collide on the same path with the same body prefix
+(shouldn't happen — dedup merges them — but defensively), track which IDs have
+already been claimed and skip them on subsequent matches.
+
+Attach the captured `comment_id` to each finding for use by auto-mode
+emission. Findings that were relocated to the review body (not posted inline)
+get `comment_id: null`.
 
 ### Review summary formatting
 
@@ -408,6 +484,13 @@ Guidelines for the summary:
     "We'll be back. We always come back."
 - **Don't overdo it.** The personality is seasoning, not the meal. The positives
   and finding count are the substance.
+- **One line per positive.** Each positive is a single sentence. Two sentences
+  is the absolute ceiling and should be rare. No paragraphs.
+- **Verdict line.** After the positives (or after the closer), add the verdict:
+  - Clean: `🟢 **Nothing here should block merge.** The findings are worth
+    reading but none are correctness or safety issues.`
+  - Blocking: `🔴 **Worth addressing before merge:**
+    <blocking_summary — one line naming the top correctness/security finding>.`
 
 ### Comment formatting
 
@@ -430,15 +513,109 @@ Each posted inline comment includes:
 
 ## Auto Mode
 
-When invoked from `/raccoons-watch` or with `--auto`, run the review without
-human confirmation:
+When auto mode is requested, run the review without human confirmation:
 
 - Execute Steps 1–4 normally
 - **Skip Step 5 entirely** — no terminal preview, no AskUserQuestion
 - Execute Step 6 — post all merged findings directly to GitHub
+- Emit findings JSON for the caller (see below)
 - Return the review URL to the caller
 
 Auto mode uses tiered dispatch (same as interactive). Every finding gets posted.
+
+### How auto mode is signaled
+
+`$ARGUMENTS` is a single opaque string — passing flags like `--auto` inside it
+will pollute the `gh` commands in Step 1 (literal substitution), so it cannot
+carry mode flags. Auto mode is signaled by **the invoking context only**:
+
+- **Caller is `/raccoons-watch`.** The watcher invokes this skill with
+  `args: "<pr-number>"` and includes "run in auto mode" (and optionally a
+  pinned dispatch tier) in the invocation message it sends after the Skill
+  call. If you see "auto mode" in the invocation context, run auto mode
+  regardless of `$ARGUMENTS`.
+- **User passes `--auto` themselves on the command line.** Claude Code may
+  surface this as a separate hint in the invocation context (not inside
+  `$ARGUMENTS`). Treat it the same way.
+
+If `$ARGUMENTS` looks like it contains anything beyond a bare PR number
+(e.g., `"6928 --auto"`), trim it to the leading integer and warn the user
+that flags-in-args don't work — then proceed.
+
+### Pinned dispatch tier
+
+When `/raccoons-watch` invokes this skill for a re-review, it pins the dispatch
+tier to whatever was used on the original review (so the same raccoon squad
+runs both times — otherwise correlation fights agent diversity). The pin is
+communicated as part of the invocation context: the watcher's session reads
+this skill and tells itself "pinned tier = `<value>`, skip Step 2."
+
+When you see a pinned tier in your invocation context:
+
+- **Skip Step 2 (Triage classification)** — do not call the triage agent for
+  the change-type classification
+- Use the pinned tier directly to select the raccoon squad in Step 3
+- For the blast-radius scan when the pinned tier is `mutative`: if the
+  invocation context also includes a **pinned `modified_identifiers` list**
+  (the watcher passes this through from the cached v1 emission), use it
+  directly for the grep step — no re-classification needed. Otherwise run a
+  scoped triage that returns only `modified_identifiers` and skip the rest.
+- Still emit `modified_identifiers` in the findings JSON (the pinned list, or
+  the freshly-grepped one) so the cache stays warm for next time.
+- Print: *"🔍 Triage skipped — re-review pinned to **<tier>** by /raccoons-watch."*
+
+### Findings emission
+
+After the review posts, write the parsed structured findings to
+`/tmp/raccoons-findings-<repo>-<pr>.json` (overwrite if present). Shape:
+
+```json
+{
+  "repo": "mikasa",
+  "number": 12345,
+  "head_sha": "abc123",
+  "dispatch_tier": "mutative",
+  "modified_identifiers": ["User#eligible_for_billing?", "BillingService#process"],
+  "verdict": "clean",
+  "blocking_summary": null,
+  "review_id": 1234567890,
+  "review_url": "https://github.com/...",
+  "posted_at": "2026-04-13T18:39:21Z",
+  "findings": [
+    {
+      "id": "f_001",
+      "file": "app/services/foo.rb",
+      "line": 42,
+      "file_basename": "foo.rb",
+      "fingerprint_tokens": ["nil-template-identifier", "no-validation"],
+      "tags": ["🌪️ Chaos Carol", "🔮 The Oracle"],
+      "body": "...",
+      "suggestion": "next unless client",
+      "posted_inline": true,
+      "comment_id": 9876543210
+    }
+  ]
+}
+```
+
+- `posted_inline` is `true` for findings posted as inline comments, `false`
+  for findings relocated to the review body.
+- `comment_id` is the GitHub inline-comment ID for `posted_inline: true`
+  findings (captured via the review-comments fetch in Step 6), or `null` for
+  findings in the review body. `/raccoons-watch` uses this to delete duplicate
+  inline comments on re-review.
+- `review_id` is the GitHub review object ID (numeric), used by callers that
+  want to fetch the review's comments later.
+- `modified_identifiers` is the list returned by triage in Step 2 (or `[]` for
+  non-mutative changes). Callers may cache this for use in subsequent
+  re-reviews where Step 2 is skipped, so blast-radius can still run without
+  re-triaging.
+
+Always emit the file even if `findings` is empty (so the caller can
+distinguish "no findings" from "review failed").
+
+The caller is responsible for reading and deleting this file. If the file
+already exists from a prior run, overwrite it.
 
 ## Global Rules
 
