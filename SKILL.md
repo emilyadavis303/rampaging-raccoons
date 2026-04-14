@@ -349,37 +349,35 @@ complete.
 
 After all agents return:
 
-1. **Parse findings** — scan each agent's output for `FINDING:` blocks. Extract
-   `file`, `line`, `tag`, `body`, `suggestion` fields from each block.
+1. **Collect raw outputs** — gather the full text output from every returned
+   raccoon agent. Prefix each with a header identifying the agent name and tag
+   (e.g., `=== Chaos Carol (🌪️) ===`).
 
-2. **Deduplicate** — if two findings reference the same file and same line
-   (within ±3 lines) and describe the same underlying issue, keep the
-   better-written one. Merge their tags (e.g., `🌪️ Chaos Carol · 🔮 The Oracle`).
-   If all 8 raccoons flag the same issue, use: `All eight raccoons 🥒🌪️🥃🔦🔮🚧📟🧪`
+2. **Dispatch merge agent** — read the prompt from
+   `~/.claude/skills/rampaging-raccoons/merge-prompt.md`. Launch a single Agent
+   with `model: "opus"` using that prompt. Pass it three inputs:
 
-3. **Strip existing** — remove findings that substantially overlap with existing
-   review comments fetched in Step 1.
+   - All agent outputs (concatenated, with agent name headers from item 1)
+   - The cleaned diff (from Step 1)
+   - Existing review comments (from Step 1)
 
-4. **Verify claims** — for each remaining finding, spot-check that the claim
-   matches the actual diff. Read the cited `file:line` in the diff and confirm
-   the finding describes what's actually there. Drop findings where the agent
-   hallucinated code that doesn't exist, described behavior opposite to what the
-   code does, or referenced lines/constructs not present in the diff. This step
-   is cheap and catches the most common agent failure mode.
+   The merge agent returns a JSON object with `findings`, `positives`,
+   `verdict`, and `blocking_summary`.
 
-   **Brevity pass:** enforce the 20-word target / 30-word ceiling on every
-   finding body. Strip scene-setting — the reader is on the line already.
-   If a finding has two numbered concerns, split into two findings. If it
-   compares to other code in the PR without that being the point, cut the
-   comparison. Keep the personality in the phrasing, not in extra words.
+3. **Parse the returned JSON** — if the merge agent returns malformed JSON
+   (fails `JSON.parse` or equivalent), retry the merge agent once with the same
+   inputs. If the second attempt also fails, fall back to presenting raw agent
+   outputs to the user in Step 5 (skip fingerprinting).
 
-5. **Fingerprint** — for each remaining finding, generate a normalized issue
-   token set used by `/raccoons-watch` to correlate findings across re-reviews.
+4. **Fingerprint** — for each finding in the merge agent's JSON, generate a
+   normalized issue token set used by `/raccoons-watch` to correlate findings
+   across re-reviews. This step stays in the orchestrator, not in the merge
+   agent.
 
-   Launch one Agent with `model: "haiku"` and pass it all surviving finding
-   bodies in a single batched prompt. Ask it to return a JSON array, one entry
-   per finding, each with 4–8 kebab-case tokens describing the *kind* of issue
-   (not the specific identifier names). Examples:
+   Launch one Agent with `model: "haiku"` and pass it all finding bodies in a
+   single batched prompt. Ask it to return a JSON array, one entry per finding,
+   each with 4–8 kebab-case tokens describing the *kind* of issue (not the
+   specific identifier names). Examples:
 
    - `["nil-template-identifier", "no-validation", "silent-passthrough"]`
    - `["compact-vs-compact-blank", "behavior-change", "filter-semantics"]`
@@ -395,24 +393,6 @@ After all agents return:
    If the Haiku call fails or returns malformed JSON, fall back to an empty
    token list — findings still post normally; only re-review correlation is
    degraded.
-
-6. **Sort by importance** — flat list, most important first. Correctness and
-   security issues → design and architecture → clarity and maintainability → nits.
-
-7. **Verdict** — determine whether any findings should block merge.
-
-   Walk the sorted list. If any finding is in the **correctness or security**
-   tier (unhandled errors, data integrity, race conditions, missing
-   validation at system boundaries), the verdict is `blocking` and the
-   `blocking_summary` is a one-liner describing the top such finding.
-
-   If all findings are architecture, clarity, or nits, the verdict is `clean`.
-
-   Zero findings → verdict is `clean`.
-
-   This is a quick classification you make during the sort, not an LLM call.
-
-8. **Collect positives** — gather `POSITIVE:` blocks for the review summary.
 
 ## Step 5: Confirm
 
