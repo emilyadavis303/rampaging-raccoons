@@ -46,24 +46,9 @@ Add `--casing-the-joint` to any of them to preview without posting.
 /rampaging-raccoons 1234 --trash-compactor --night-shift
 ```
 
-## Cost & token guidance
+## Model usage
 
-All raccoon agents run on **Opus** by default. Triage and fingerprinting use Haiku. Token usage scales with squad size and diff length.
-
-**Approximate cost per review** (varies with diff size):
-
-| Scenario | Agents | Rough cost |
-|----------|--------|------------|
-| Mechanical (triage default) | 2 | ~$0.40 |
-| Additive (triage default) | 6 | ~$1.20 |
-| Full rampage (mutative or `--full-rampage`) | 8 | ~$2.00 |
-| `--bomb-sniffer` | 2 | ~$0.40 |
-| `--trash-compactor` | 4 | ~$0.80 |
-| `--night-shift` | 3 | ~$0.60 |
-
-Estimates assume a ~500-line diff. Larger diffs cost more. The Haiku triage and fingerprinting calls add ~$0.01-0.02.
-
-**To reduce costs**, add `agent-model: sonnet` to `my-context.md` — this forces all agents to Sonnet and drops a full rampage to ~$0.25.
+All raccoon agents run on **Opus** by default. Triage and fingerprinting use **Haiku**. To override, add `agent-model: sonnet` to `my-context.md` — this forces all agents to Sonnet.
 
 ## Install
 
