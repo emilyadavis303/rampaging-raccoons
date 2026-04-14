@@ -144,24 +144,26 @@ to the appropriate squad.
 
 ## Step 3: Dispatch
 
-Dispatch agents based on the triage result from Step 2 — **unless a rampage
-level flag overrides it** (see persona's Rampage Level Overrides). Each agent
-runs as a background Agent call with `run_in_background: true`.
+Dispatch agents based on the triage result from Step 2 — unless a dispatch
+override flag is present. Each agent runs as a background Agent call with
+`run_in_background: true`.
+
+Read the Agent Roster and Dispatch Strategy from `persona.md` to determine
+which agents to launch and how to select them.
 
 ### Dispatch logic
 
-1. **Read the persona's Agent Roster and Dispatch Strategy** from `persona.md`.
-2. **Check for rampage level flags** in the invocation context:
-   - If a rampage level flag is present, **skip Step 2 (Triage)** entirely and
-     use the persona's rampage level rules to determine the squad directly.
-   - If multiple squad flags are present, dispatch the **union** of their squads
-     (deduplicated).
-   - Print the override announcement using the persona's voice.
-3. **Otherwise, use the triage result** + the persona's tiered dispatch table to
-   select which agents to dispatch.
-4. **Construct agent prompts** using the persona's Agent Prompt Template from
-   `persona.md`. Read each dispatched agent's file from the skill's `agents/`
-   directory.
+1. **Read the persona's roster and dispatch strategy** from `persona.md`.
+2. **If a rampage level flag is in the invocation context**, use the persona's
+   flag parsing rules to determine the squad directly — **skip Step 2
+   (Triage)** entirely. If multiple flags are present, dispatch the **union**
+   of their squads (deduplicated). Print the override announcement using the
+   persona's voice.
+3. **Otherwise, map the triage result** through the persona's tiered dispatch
+   table to select which agents to dispatch.
+4. **Construct each agent's prompt** using the persona's Agent Prompt Template
+   from `persona.md`. Read each dispatched agent's file from the skill's
+   `agents/` directory.
 5. **Launch all selected agents** as background Agent calls with the model
    specified by the persona (default `model: "opus"`, overridable via
    `agent-model` in `my-context.md`). Wait for all to complete.
@@ -231,6 +233,9 @@ After all agents return:
 Present the merged findings in the terminal, numbered. Use the persona's
 **Review Summary Voice** from `persona.md` for formatting — opener, positives,
 and finding list style are all persona-defined.
+
+> **Note:** Examples in this section use the Rampaging Raccoons persona for
+> illustration. The actual voice and formatting come from `persona.md`.
 
 Use AskUserQuestion with these options:
 
@@ -391,7 +396,7 @@ After the review posts, write the parsed structured findings to
   "number": 12345,
   "head_sha": "abc123",
   "dispatch_tier": "mutative | additive | mechanical",
-  "rampage_level": "--full-rampage | --bomb-sniffer | --trash-compactor | --night-shift | null",
+  "rampage_level": "<flag from persona's rampage level overrides, or null>",
   "modified_identifiers": ["User#eligible_for_billing?", "BillingService#process"],
   "verdict": "clean",
   "blocking_summary": null,
