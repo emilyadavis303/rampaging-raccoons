@@ -16,6 +16,48 @@ posted as one GitHub review with inline comments.
 `~/code/homebot/mikasa`), not from a parent directory. The `gh` commands need
 git context to resolve the repo.
 
+## Rampage Levels
+
+Rampage levels let the user override the default triage-based dispatch with a
+named squad. Flags are passed in the invocation context (not inside
+`$ARGUMENTS` — same as `--auto`).
+
+| Flag | Squad | Use case |
+|------|-------|----------|
+| *(no flag)* | Triage decides (default) | Let the raccoons figure it out |
+| `--full-rampage` | All 8 | Maximum scrutiny regardless of triage |
+| `--bomb-sniffer` | Chaos Carol, Inspector Bandit | Does it break anything? Does it match the description? |
+| `--trash-compactor` | Nit Pickles, Cranky Hank, Lil' Whiskers, Squinty | Style, architecture, clarity, tests |
+| `--night-shift` | Chaos Carol, The Oracle, Nosy | Will this page someone at 3am? |
+| `--casing-the-joint` | *(modifier)* | Dry run — show findings in terminal, skip GitHub posting |
+
+### Flag parsing
+
+Check the invocation context for flags. Flags are **not** inside `$ARGUMENTS`
+(which is always just the PR number). If `$ARGUMENTS` contains anything beyond
+a bare integer, trim to the leading integer and warn the user.
+
+1. If any rampage level flag is present, **skip Step 2 (Triage)** entirely —
+   the flag determines the squad directly.
+2. If multiple squad flags are present (e.g., `--trash-compactor --night-shift`),
+   dispatch the **union** of their squads (deduplicated). In this example:
+   Nit Pickles, Cranky Hank, Lil' Whiskers, Squinty, Chaos Carol, The Oracle,
+   Nosy (7 raccoons).
+3. `--full-rampage` with any other squad flag = all 8 (full-rampage wins).
+4. `--casing-the-joint` is a **modifier**, not a squad — it combines with any
+   other flag (or no flag). When present:
+   - Execute Steps 1–5 normally (findings are shown in terminal)
+   - **Skip Step 6** — nothing is posted to GitHub
+   - Print: *"🔍 Casing the joint — findings above, nothing posted."*
+   - Still emit findings JSON to `/tmp/` (with `review_id: null`,
+     `review_url: null`, `posted_inline: false` for all findings)
+5. `--casing-the-joint` alone (no squad flag) = triage decides the squad, but
+   don't post.
+
+When a rampage level overrides triage, print:
+
+> 🦝 **<flag>** — deploying **N raccoons** (<names>).
+
 ## Step 1: Gather
 
 Run the gather operations in **two batches**. Batch A operations are all
@@ -100,6 +142,41 @@ Read all matching language hint files from
 
 Multiple languages per PR are expected — read all that match.
 
+### Batch C — blast-radius scan
+
+Depends on the cleaned diff from Batch B. Scan the diff for modified
+method/function signatures: lines starting with `-` that contain definition
+patterns (`def `, `func `, `fn `, or indented `def ` in Python/Ruby). If any
+are found, extract the identifier names (class + method where inferable).
+
+For each modified identifier:
+
+1. Grep the repo for callers/includers (exclude the changed files themselves,
+   exclude `vendor/`, `node_modules/`, generated files)
+2. Collect file paths + line numbers + the calling line as context
+3. Cap at **5 callers per identifier**. If more exist, add:
+   `... and N more callers`
+4. Format as a "Downstream Dependencies" section to inject into agent prompts:
+
+```
+## Downstream Dependencies
+
+### `User#eligible_for_billing?` (modified)
+- app/services/billing_service.rb:88 — BillingService#process
+- app/services/sponsorship_manager.rb:23 — SponsorshipManager#discard
+- app/jobs/rea_downgrade_job.rb:15 — ReaDowngradeJob#perform
+... and 4 more callers
+```
+
+If no modified signatures are detected, skip the blast-radius scan — no
+Downstream Dependencies section is injected.
+
+This scan runs unconditionally whenever signatures change, regardless of
+triage classification or rampage level overrides.
+
+Store the extracted identifiers as `modified_identifiers` for the findings
+JSON emission in Step 6.
+
 ## Step 2: Triage
 
 Run a fast Haiku classification on the cleaned diff to determine change type and
@@ -123,35 +200,16 @@ Print the result:
 
 > 🔍 Triage: **<change_type>** — <reasoning>
 
-### Blast radius scan (mutative only)
-
-When triage returns `mutative` with `modified_identifiers`:
-
-1. For each identifier, grep the repo for callers/includers (exclude the changed
-   files themselves, exclude `vendor/`, `node_modules/`, generated files)
-2. Collect file paths + line numbers + the calling line as context
-3. Cap at **5 callers per identifier**. If more exist, add:
-   `... and N more callers`
-4. Format as a "Downstream Dependencies" section to inject into agent prompts:
-
-```
-## Downstream Dependencies
-
-### `User#eligible_for_billing?` (modified)
-- app/services/billing_service.rb:88 — BillingService#process
-- app/services/sponsorship_manager.rb:23 — SponsorshipManager#discard
-- app/jobs/rea_downgrade_job.rb:15 — ReaDowngradeJob#perform
-... and 4 more callers
-```
-
-If triage returns `mechanical` or `additive`, skip the blast radius scan.
-
 ## Step 3: Dispatch
 
-Dispatch raccoon agents based on the triage result from Step 2. Each agent runs
+Dispatch raccoon agents based on the triage result from Step 2 — **unless a
+rampage level flag overrides it** (see Rampage Levels above). Each agent runs
 as a background Agent call with `run_in_background: true`.
 
-### Tiered dispatch
+If a rampage level flag is present, skip triage-based selection and use the
+flag's squad instead. If multiple flags are combined, dispatch the union.
+
+### Tiered dispatch (default, when no rampage level flag is set)
 
 | Change type | Raccoons dispatched | Rationale |
 |------------|-------------------|-----------|
@@ -175,6 +233,10 @@ Print which squad is deploying:
 | 6 | Inspector Bandit | `agents/inspector-bandit.md` | `🚧 Inspector Bandit` |
 | 7 | Nosy | `agents/nosy.md` | `📟 Nosy` |
 | 8 | Squinty | `agents/squinty.md` | `🧪 Squinty` |
+
+All agents dispatch with `model: "opus"` by default. To override, add
+`agent-model: sonnet` to `my-context.md` — this forces all agents to Sonnet
+for teams that want to reduce token spend.
 
 ### Diff content for agents
 
@@ -214,7 +276,7 @@ You are a code reviewer looking at PR #<number>: "<title>" by <author>.
 
 ## Downstream Dependencies
 
-<blast radius output from Step 2, or omit this section if not mutative>
+<blast radius output from Step 1 Batch C, or omit this section if no modified signatures were detected>
 
 ## Existing Review Comments
 
@@ -264,13 +326,24 @@ Rules:
   FINDING: and POSITIVE: blocks. The orchestrator merges, deduplicates, and
   posts a single unified review. If you post directly, your findings will
   appear as a separate rogue review alongside the merged one
-- **Brevity:** 1–2 sentences, ~40 words max per finding body. One punch, optional
-  one-line follow-up. Personality lives in the phrasing, not in extra sentences.
-  No paragraph monologues. If you can't say it in two sentences, the finding
-  isn't sharp enough — cut or skip
+- **Brevity — 20 words is the target, 30 is the hard ceiling.**
+  - Lead with the problem, not the observation. The reader is looking at the
+    line — they have the context. Don't set the scene.
+  - One concern per finding. If you're numbering, it's two findings — split them.
+  - Don't compare to other code in the PR unless the comparison IS the point.
+  - Never explain a suggestion. Just show the code.
+  - One sentence default. A second sentence is the exception, not the norm.
+  - ❌ "This test only checks `options[:transactional]` is true but never calls
+    `service.call` or asserts `EmailDispatcher` got `homebot_transactional`.
+    Every other delivery spec in this PR goes all the way through — this one
+    stops at the doorstep."
+  - ✅ "Test checks `options[:transactional]` but never calls `service.call` —
+    every other delivery spec goes end-to-end."
 ```
 
-Launch all selected agents as background Agent calls. Wait for all to complete.
+Launch all selected agents as background Agent calls with `model: "opus"` (or
+the `agent-model` override from `my-context.md` if set). Wait for all to
+complete.
 
 ## Step 4: Merge
 
@@ -294,11 +367,11 @@ After all agents return:
    code does, or referenced lines/constructs not present in the diff. This step
    is cheap and catches the most common agent failure mode.
 
-   **Brevity pass:** while you're already in each finding body, trim wordiness.
-   Target: 1–2 sentences, ~40 words. If a finding runs longer, compress it
-   without losing the punch — keep the personality, drop the throat-clearing.
-   If it can't be compressed without losing substance, the finding is probably
-   two findings glued together — split or drop the weaker half.
+   **Brevity pass:** enforce the 20-word target / 30-word ceiling on every
+   finding body. Strip scene-setting — the reader is on the line already.
+   If a finding has two numbered concerns, split into two findings. If it
+   compares to other code in the PR without that being the point, cut the
+   comparison. Keep the personality in the phrasing, not in extra words.
 
 5. **Fingerprint** — for each remaining finding, generate a normalized issue
    token set used by `/raccoons-watch` to correlate findings across re-reviews.
@@ -555,13 +628,10 @@ When you see a pinned tier in your invocation context:
 - **Skip Step 2 (Triage classification)** — do not call the triage agent for
   the change-type classification
 - Use the pinned tier directly to select the raccoon squad in Step 3
-- For the blast-radius scan when the pinned tier is `mutative`: if the
-  invocation context also includes a **pinned `modified_identifiers` list**
-  (the watcher passes this through from the cached v1 emission), use it
-  directly for the grep step — no re-classification needed. Otherwise run a
-  scoped triage that returns only `modified_identifiers` and skip the rest.
-- Still emit `modified_identifiers` in the findings JSON (the pinned list, or
-  the freshly-grepped one) so the cache stays warm for next time.
+- Blast-radius runs in Step 1 Batch C as usual (based on signature detection
+  in the diff, not triage classification) — no special handling needed.
+- Still emit `modified_identifiers` in the findings JSON so the cache stays
+  warm for next time.
 - Print: *"🔍 Triage skipped — re-review pinned to **<tier>** by /raccoons-watch."*
 
 ### Findings emission
@@ -574,7 +644,8 @@ After the review posts, write the parsed structured findings to
   "repo": "mikasa",
   "number": 12345,
   "head_sha": "abc123",
-  "dispatch_tier": "mutative",
+  "dispatch_tier": "mutative | additive | mechanical",
+  "rampage_level": "--full-rampage | --bomb-sniffer | --trash-compactor | --night-shift | null",
   "modified_identifiers": ["User#eligible_for_billing?", "BillingService#process"],
   "verdict": "clean",
   "blocking_summary": null,
@@ -606,10 +677,9 @@ After the review posts, write the parsed structured findings to
   inline comments on re-review.
 - `review_id` is the GitHub review object ID (numeric), used by callers that
   want to fetch the review's comments later.
-- `modified_identifiers` is the list returned by triage in Step 2 (or `[]` for
-  non-mutative changes). Callers may cache this for use in subsequent
-  re-reviews where Step 2 is skipped, so blast-radius can still run without
-  re-triaging.
+- `modified_identifiers` is populated from the Step 1 Batch C signature scan
+  when blast-radius ran, from triage when it didn't skip, or `[]` when neither
+  applied. Callers may cache this for use in subsequent re-reviews.
 
 Always emit the file even if `findings` is empty (so the caller can
 distinguish "no findings" from "review failed").
