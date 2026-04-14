@@ -25,6 +25,46 @@ A fast Haiku triage pass classifies the change before the rampage begins, so the
 | Additive (new code only) | Chaos Carol, The Oracle, Inspector Bandit, Cranky Hank, Nosy, Squinty |
 | Mechanical (renames, formatting, moves) | Chaos Carol, Inspector Bandit |
 
+## Rampage levels
+
+Override the default triage with a named squad. Flags are combinable — the union of all selected squads is dispatched.
+
+| Flag | Squad | When to use |
+|------|-------|-------------|
+| `--full-rampage` | All 8 | Maximum scrutiny regardless of triage |
+| `--bomb-sniffer` | Chaos Carol, Inspector Bandit | Quick check — does it break anything? |
+| `--trash-compactor` | Nit Pickles, Cranky Hank, Lil' Whiskers, Squinty | Code quality pass — style, architecture, clarity, tests |
+| `--night-shift` | Chaos Carol, The Oracle, Nosy | The 3am crew — will this page someone? |
+| `--casing-the-joint` | *(modifier)* | Dry run — findings shown in terminal, nothing posted to GitHub |
+
+Combine them: `--trash-compactor --night-shift` dispatches 7 raccoons.
+Add `--casing-the-joint` to any of them to preview without posting.
+
+```text
+/rampaging-raccoons 1234 --bomb-sniffer
+/rampaging-raccoons 1234 --casing-the-joint
+/rampaging-raccoons 1234 --trash-compactor --night-shift
+```
+
+## Cost & token guidance
+
+All raccoon agents run on **Opus** by default. Triage and fingerprinting use Haiku. Token usage scales with squad size and diff length.
+
+**Approximate cost per review** (varies with diff size):
+
+| Scenario | Agents | Rough cost |
+|----------|--------|------------|
+| Mechanical (triage default) | 2 | ~$0.40 |
+| Additive (triage default) | 6 | ~$1.20 |
+| Full rampage (mutative or `--full-rampage`) | 8 | ~$2.00 |
+| `--bomb-sniffer` | 2 | ~$0.40 |
+| `--trash-compactor` | 4 | ~$0.80 |
+| `--night-shift` | 3 | ~$0.60 |
+
+Estimates assume a ~500-line diff. Larger diffs cost more. The Haiku triage and fingerprinting calls add ~$0.01-0.02.
+
+**To reduce costs**, add `agent-model: sonnet` to `my-context.md` — this forces all agents to Sonnet and drops a full rampage to ~$0.25.
+
 ## Install
 
 ```bash
@@ -52,4 +92,8 @@ Drop a new `.md` file in `languages/` to add language-specific review patterns. 
 
 ## Adding raccoons
 
-Drop a new `.md` file in `agents/` to add a perspective. Remove one to retire it. Update the tiered dispatch table in `SKILL.md` if the new raccoon should join a specific squad.
+Drop a new `.md` file in `agents/` to add a perspective. Remove one to retire it. Update the dispatch table in `persona.md` if the new raccoon should join a specific squad.
+
+## Architecture
+
+The skill is split into three layers: `engine.md` (generic orchestration pipeline — gather, dispatch, merge, post), `persona.md` (raccoon-specific roster, dispatch strategy, prompt template, review voice), and `merge-prompt.md` (dedicated merge agent instructions). `SKILL.md` is a thin entry point that loads them.
