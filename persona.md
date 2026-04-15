@@ -44,9 +44,9 @@ Print which squad is deploying:
 
 > 🦝 Deploying **N raccoons** (<names>) for a **<change_type>** change.
 
-### Rampage Level Overrides
+### Rampage Levels
 
-Flags override the default triage-based dispatch with a named squad.
+Squad selection. Override the default triage-based dispatch with a named squad.
 
 | Flag | Squad | Use case |
 |------|-------|----------|
@@ -55,7 +55,15 @@ Flags override the default triage-based dispatch with a named squad.
 | `--bomb-sniffer` | Chaos Carol, Inspector Bandit | Does it break anything? Does it match the description? |
 | `--trash-compactor` | Nit Pickles, Cranky Hank, Lil' Whiskers, Squinty | Style, architecture, clarity, tests |
 | `--night-shift` | Chaos Carol, The Oracle, Nosy | Will this page someone at 3am? |
-| `--casing-the-joint` | *(modifier)* | Dry run — show findings in terminal, skip GitHub posting |
+
+### Rampage Types
+
+Session modifiers. Change what happens with the findings after merge. A type combines with any level (or no level). The two types are **mutually exclusive** — one is for scouting, the other for fixing.
+
+| Flag | Behavior |
+|------|----------|
+| `--casing-the-joint` | Dry run — show findings in terminal, skip GitHub posting |
+| `--mirror-check` | Self-review your own PR — walk findings one-by-one with fix/skip/defer, end with commit + post-deferred prompts. Requires PR's branch checked out locally. |
 
 ### Flag Parsing Rules
 
@@ -63,26 +71,43 @@ Check the invocation context for flags. Flags are **not** inside `$ARGUMENTS`
 (which is always just the PR number). If `$ARGUMENTS` contains anything beyond
 a bare integer, trim to the leading integer and warn the user.
 
+**Levels (squad selection):**
+
 1. If any rampage level flag is present, **skip Step 2 (Triage)** entirely —
-   the flag determines the squad directly.
-2. If multiple squad flags are present (e.g., `--trash-compactor --night-shift`),
+   the level determines the squad directly.
+2. If multiple level flags are present (e.g., `--trash-compactor --night-shift`),
    dispatch the **union** of their squads (deduplicated). In this example:
    Nit Pickles, Cranky Hank, Lil' Whiskers, Squinty, Chaos Carol, The Oracle,
    Nosy (7 raccoons).
-3. `--full-rampage` with any other squad flag = all 8 (full-rampage wins).
-4. `--casing-the-joint` is a **modifier**, not a squad — it combines with any
-   other flag (or no flag). When present:
-   - Execute Steps 1-5 normally (findings are shown in terminal)
-   - **Skip Step 6** — nothing is posted to GitHub
-   - Print: *"🔍 Casing the joint — findings above, nothing posted."*
-   - Still emit findings JSON to `/tmp/` (with `review_id: null`,
-     `review_url: null`, `posted_inline: false` for all findings)
-5. `--casing-the-joint` alone (no squad flag) = triage decides the squad, but
-   don't post.
+3. `--full-rampage` with any other level flag = all 8 (full-rampage wins).
 
-When a rampage level overrides triage, print:
+**Types (session modifiers):**
 
-> 🦝 **<flag>** — deploying **N raccoons** (<names>).
+4. `--casing-the-joint` and `--mirror-check` are **mutually exclusive**. If
+   both are passed, error and exit:
+   *"--mirror-check and --casing-the-joint serve different goals — pick one.
+   Mirror is for fixing your own PR; casing is read-only scouting."*
+5. `--casing-the-joint`: execute Steps 1-5 normally, **skip Step 6** (no
+   posting). Print: *"🔍 Casing the joint — findings above, nothing posted."*
+6. `--mirror-check`: replace Step 5 with the self-review walkthrough (see
+   engine.md Step 5). Requires the PR's headRefName to be the currently
+   checked-out branch — engine.md does this pre-flight check after Batch A.
+7. A type combines with any level (or no level). Examples:
+   - `--mirror-check` alone → triage decides squad, then walkthrough
+   - `--full-rampage --mirror-check` → all 8 raccoons, then walkthrough
+   - `--bomb-sniffer --casing-the-joint` → 2 raccoons, dry run preview
+
+When a level overrides triage, print:
+
+> 🦝 **<level>** — deploying **N raccoons** (<names>).
+
+When a type is set, print after the level line:
+
+> 🪞 Mirror check mode — we'll walk through findings together.
+
+or:
+
+> 🔍 Casing the joint — preview only, nothing will be posted.
 
 ## Agent Prompt Template
 

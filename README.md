@@ -27,7 +27,7 @@ A fast Haiku triage pass classifies the change before the rampage begins, so the
 
 ## Rampage levels
 
-Override the default triage with a named squad. Flags are combinable — the union of all selected squads is dispatched.
+Squad selection. Override the default triage with a named squad. Levels are combinable — the union of all selected squads is dispatched.
 
 | Flag | Squad | When to use |
 |------|-------|-------------|
@@ -35,15 +35,24 @@ Override the default triage with a named squad. Flags are combinable — the uni
 | `--bomb-sniffer` | Chaos Carol, Inspector Bandit | Quick check — does it break anything? |
 | `--trash-compactor` | Nit Pickles, Cranky Hank, Lil' Whiskers, Squinty | Code quality pass — style, architecture, clarity, tests |
 | `--night-shift` | Chaos Carol, The Oracle, Nosy | The 3am crew — will this page someone? |
-| `--casing-the-joint` | *(modifier)* | Dry run — findings shown in terminal, nothing posted to GitHub |
 
-Combine them: `--trash-compactor --night-shift` dispatches 7 raccoons.
-Add `--casing-the-joint` to any of them to preview without posting.
+## Rampage types
+
+Session modifiers. Change what happens with the findings after merge. A type combines with any level (or no level). The two types are **mutually exclusive** — one is for scouting, the other for fixing.
+
+| Flag | Behavior |
+|------|----------|
+| `--casing-the-joint` | Dry run — findings shown in terminal, nothing posted to GitHub |
+| `--mirror-check` | Self-review your own PR — walks findings interactively (fix / skip / defer each), ends with commit + post-deferred prompts. Requires PR's branch checked out locally. |
+
+Combine a level with a type:
 
 ```text
 /rampaging-raccoons 1234 --bomb-sniffer
 /rampaging-raccoons 1234 --casing-the-joint
 /rampaging-raccoons 1234 --trash-compactor --night-shift
+/rampaging-raccoons 1234 --mirror-check
+/rampaging-raccoons 1234 --full-rampage --mirror-check
 ```
 
 ## Model usage

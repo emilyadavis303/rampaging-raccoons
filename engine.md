@@ -42,6 +42,30 @@ root.
 **6. Custom engineer context** — check if the skill's `my-context.md` has
 non-comment content. If so, read and include it.
 
+### Mirror check pre-flight (only if `--mirror-check` is set)
+
+When `--mirror-check` is set, verify the PR's branch is currently checked out
+locally. Mirror check makes edits to the working tree, so it only makes sense
+on your own PR's branch.
+
+```bash
+git branch --show-current
+```
+
+Compare the output against `headRefName` from the PR metadata fetched in
+Batch A.
+
+- **If they match:** continue to Batch B normally.
+- **If they don't match:** error and exit:
+
+  > ❌ Mirror check needs PR #<number>'s branch (`<headRefName>`) checked out
+  > locally. You're on `<current_branch>`. Either check out the PR's branch
+  > or use `--casing-the-joint` if you just want to preview without editing.
+
+  Do not proceed to Batch B. Return immediately.
+
+If `--mirror-check` is not set, skip this check entirely.
+
 ### Batch B — after Batch A completes
 
 These depend on the diff fetched in Batch A.
@@ -230,19 +254,165 @@ After all agents return:
 
 ## Step 5: Confirm
 
-Present the merged findings in the terminal, numbered. Use the persona's
-**Review Summary Voice** from `persona.md` for formatting — opener, positives,
-and finding list style are all persona-defined.
+Step 5 branches based on the rampage type set in the invocation context.
 
-> **Note:** Examples in this section use the Rampaging Raccoons persona for
-> illustration. The actual voice and formatting come from `persona.md`.
+### Default mode (no type flag, or `--casing-the-joint`)
+
+Present the merged findings in the terminal, numbered. Use the persona's
+Review Summary Voice from `persona.md` for formatting.
+
+> Example terminal output uses the Rampaging Raccoons persona for
+> illustration. Actual voice and personality come from `persona.md`.
+
+```
+🦝 Rampaging Raccoons rummaged through PR #<number> and found N things
+worth chattering about.
+
+1. `path/to/file.rb:42` — Thoughts on renaming this...
+   — 🥒 Nit Pickles
+2. `path/to/handler.go:88` — What happens when ctx is nil here?
+   — 🌪️ Chaos Carol
+
+The good stuff 🗑️✨
+- <positive 1>
+- <positive 2>
+```
 
 Use AskUserQuestion with these options:
 
-- **Post all** — post all findings to GitHub
-- **Remove some** — user provides numbers to remove (e.g., "1,3,5"), re-present
-  remaining findings, then ask again
+- **Post all** — post all findings to GitHub (skip if `--casing-the-joint`)
+- **Remove some** — user provides numbers to remove (e.g., "1,3,5"),
+  re-present remaining findings, then ask again
 - **Bail** — nothing posted, done
+
+If `--casing-the-joint` is set, omit the "Post all" option (replace with
+"Done" — show findings, exit). Print:
+
+> 🔍 Casing the joint — findings above, nothing posted.
+
+Then emit findings JSON to `/tmp/raccoons-findings-<repo>-<pr>.json` per
+the Auto Mode Findings emission schema, with `review_id: null`,
+`review_url: null`, and `posted_inline: false` for all findings.
+
+### Mirror check mode (`--mirror-check`)
+
+Replace the standard preview with the self-review walkthrough.
+
+#### Phase 1: Summary
+
+Print a compact summary instead of the full numbered list. Use the persona's
+Review Summary Voice for tone (positives, opener phrasing).
+
+```
+🪞 Mirror check — PR #<number> (<headRefName>)
+
+The raccoons found N things. By tier:
+- Correctness: <count>
+- Design: <count>
+- Clarity: <count>
+- Nits: <count>
+
+The good stuff 🗑️✨
+- <2-3 positives, same as standard preview>
+
+<verdict line — same format as default mode>
+
+Walking through findings now. For each one: Fix, Skip, or Defer.
+```
+
+Tier counts come from the merge agent's `tier` field on each finding
+(`correctness | design | clarity | nit`). Sum them per tier.
+
+#### Phase 2: Walk through findings
+
+For each finding (in importance order, same sort as default mode), present
+the finding in this format:
+
+```
+─── Finding <i> of <N> ─────────────────────────────────
+📍 <file>:<line>
+<tags joined with " · ">
+
+<finding body>
+
+Suggested fix:
+<suggestion code, indented two spaces; omit this section if no suggestion>
+
+What would you like to do?
+```
+
+Use AskUserQuestion with three options:
+
+- **Fix** — open the file at the cited line, present the relevant code in
+  the terminal, and walk through the change with the engineer. Conversational
+  edit:
+  - Show the cited code with 5 lines of context above and below
+  - Restate the suggestion (or describe the change if no suggestion)
+  - Ask the engineer to confirm, propose an alternative, or skip
+  - Apply the agreed-upon edit using the Edit tool
+  - Confirm the edit and move to the next finding
+- **Skip** — record `mirror_disposition: "skipped"` for this finding, move on
+- **Defer** — record `mirror_disposition: "deferred"` for this finding, move on
+
+After each finding, increment the counter and present the next one. Track
+session state (fixed, skipped, deferred counts and which findings are in
+each bucket).
+
+#### Phase 3: End-of-walkthrough prompts
+
+After walking all findings, print the summary:
+
+```
+🪞 Mirror check complete.
+
+  Fixed: <count>
+  Skipped: <count>
+  Deferred: <count>
+
+Deferred findings:
+  <i>. <file>:<line> — <body>
+     — <tags>
+  <i>. <file>:<line> — <body>
+     — <tags>
+```
+
+Omit the "Deferred findings:" list if deferred count is 0.
+
+**Prompt 1: Defer disposition** (only if deferred > 0)
+
+Use AskUserQuestion:
+
+> Post deferred findings to PR as inline comments?
+
+- **Skip** — keep them session-only (default — listed first)
+- **Post** — all deferred findings get posted (so they live with the PR for later)
+
+If "Post": run Step 6's posting logic on the deferred findings only, with the
+review body summarizing only the deferred items (e.g., "🪞 Mirror check found
+N things worth deferring."). Other findings (fixed, skipped) are not posted.
+
+If "Skip": don't post anything. Continue to Prompt 2.
+
+**Prompt 2: Commit disposition** (only if fixed > 0)
+
+Use AskUserQuestion:
+
+> You fixed N findings. What about the changes?
+
+- **Leave as-is** — don't touch git (default — listed first)
+- **Stage only** — `git add` the changed files, don't commit
+- **Commit** — stage and commit with message: `Address mirror-check findings (N fixes)`
+
+If "Stage only" or "Commit", run the corresponding git commands. Print
+confirmation.
+
+If fixed = 0, skip Prompt 2 entirely.
+
+#### Phase 4: Emit findings JSON
+
+Always emit the findings JSON (per the existing Auto Mode emission rules)
+with the mirror-check fields populated. See Auto Mode section for schema
+additions.
 
 ## Step 6: Post
 
@@ -396,13 +566,20 @@ After the review posts, write the parsed structured findings to
   "number": 12345,
   "head_sha": "abc123",
   "dispatch_tier": "mutative | additive | mechanical",
-  "rampage_level": "<flag from persona's rampage level overrides, or null>",
+  "rampage_level": "<flag from persona's rampage levels, or null>",
+  "mirror_check": {
+    "fixed_count": 3,
+    "skipped_count": 2,
+    "deferred_count": 2,
+    "deferred_posted": true,
+    "fixes_committed": "committed | staged | none"
+  },
   "modified_identifiers": ["User#eligible_for_billing?", "BillingService#process"],
   "verdict": "clean",
   "blocking_summary": null,
   "review_id": 1234567890,
   "review_url": "https://github.com/...",
-  "posted_at": "2026-04-13T18:39:21Z",
+  "posted_at": "2026-04-15T18:39:21Z",
   "findings": [
     {
       "id": "f_001",
@@ -413,8 +590,9 @@ After the review posts, write the parsed structured findings to
       "tags": ["tag1", "tag2"],
       "body": "...",
       "suggestion": "next unless client",
-      "posted_inline": true,
-      "comment_id": 9876543210
+      "mirror_disposition": "fixed",
+      "posted_inline": false,
+      "comment_id": null
     }
   ]
 }
@@ -431,6 +609,16 @@ After the review posts, write the parsed structured findings to
 - `modified_identifiers` is populated from the Step 1 Batch C signature scan
   when blast-radius ran, from triage when it didn't skip, or `[]` when neither
   applied. Callers may cache this for use in subsequent re-reviews.
+- `mirror_check` is `null` for non-mirror-check sessions. When present, it
+  summarizes the walkthrough outcomes. `deferred_posted` is true if Prompt 1
+  was answered "Post". `fixes_committed` reflects Prompt 2's answer
+  (`"committed"`, `"staged"`, or `"none"`); `"none"` if fixed_count was 0.
+- `mirror_disposition` is `null` for non-mirror-check sessions or for
+  findings not yet processed. In a mirror-check session, every finding gets
+  exactly one of `"fixed"`, `"skipped"`, or `"deferred"`. For deferred
+  findings that were posted (Prompt 1 = "Post"), `posted_inline` and
+  `comment_id` are populated normally. For fixed and skipped findings,
+  `posted_inline: false, comment_id: null`.
 
 Always emit the file even if `findings` is empty (so the caller can
 distinguish "no findings" from "review failed").
