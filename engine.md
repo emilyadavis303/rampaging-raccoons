@@ -36,6 +36,18 @@ gh api repos/{owner}/{repo}/pulls/$ARGUMENTS/comments --jq '.[] | "\(.path):\(.l
 gh pr view $ARGUMENTS --json reviews --jq '.reviews[] | "\(.author.login) (\(.state)): \(.body[0:200])"'
 ```
 
+**Verify "addressed" claims:** Don't trust reply comments that say "Addressed
+in \<sha\>" — the fix may be incomplete or reverted. For any comment marked as
+addressed, fetch the actual file from the PR branch to confirm:
+
+```bash
+gh api "repos/{owner}/{repo}/contents/<path>?ref=<branch>" --jq '.content' | base64 -d
+```
+
+Only skip a comment if the fix is verified in the current code. A missing reply
+does NOT mean the comment is unaddressed — the author may have pushed a fix
+without commenting.
+
 **5. Repo conventions** — read the repo's `CLAUDE.md` if it exists at the repo
 root.
 
