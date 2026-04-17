@@ -23,7 +23,7 @@ Multi-perspective code review squad: 9 raccoon agents with distinct personalitie
 | 8 | Squinty | `agents/squinty.md` | `🧪 Squinty` |
 | 9 | Boss | `agents/boss.md` | `🦝 Boss` |
 
-Agents 1-8 are **reviewers** — they scan diffs and emit findings. Boss is the **counsel raccoon** — channels the reviewers' perspectives when processing incoming feedback in rummage mode. Boss is never dispatched as part of the review squad.
+Agents 1-8 are **reviewers** — they scan diffs and emit findings. Boss is the **rummage raccoon** — channels the reviewers' perspectives when processing incoming feedback in rummage mode. Boss is never dispatched as part of the review squad.
 
 All review agents (1-8) dispatch with `model: "opus"` by default. To override, add `agent-model: sonnet` to `my-context.md` — this forces all review agents to Sonnet for teams that want to reduce token spend. Boss always runs at `model: "opus"` regardless of override.
 
@@ -46,7 +46,7 @@ Print which squad is deploying:
 
 ### Rampage Levels
 
-Squad selection. Override the default triage-based dispatch with a named squad.
+Squad selection. Override the default triage-based dispatch with a named squad. **Peer and self branches only** — rummage mode ignores levels (Boss handles everything).
 
 | Flag | Squad | Use case |
 |------|-------|----------|

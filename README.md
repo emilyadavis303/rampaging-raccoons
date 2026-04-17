@@ -1,6 +1,6 @@
 # Rampaging Raccoons
 
-Multi-perspective PR review skill for [Claude Code](https://claude.com/claude-code). Triage classifies the change, dispatches a tiered squad of raccoon agents in parallel — each with a distinct personality and focus area — merges and deduplicates their findings, and posts one unified GitHub review with inline comments.
+Multi-perspective PR review skill for [Claude Code](https://claude.com/claude-code) with three modes: **peer review** (dispatch the squad, post one unified GitHub review), **self review** (walk findings interactively, fix in place), and **rummage** (process incoming reviewer feedback through Boss, respond comment by comment).
 
 ## The raccoons
 
@@ -14,6 +14,7 @@ Multi-perspective PR review skill for [Claude Code](https://claude.com/claude-co
 | 🚧 **Inspector Bandit**<br>*"Something doesn't add up here."* | PR description vs diff alignment, scope, missing pieces |
 | 📟 **Nosy**<br>*"Okay, it's 3am, the alert fires. What do I see?"* | Observability — the 3am test, logs, traces, error context, alerts |
 | 🧪 **Squinty**<br>*"So much green, so little confidence."* | Tests-as-code — does this test prove what it claims? |
+| 🦝 **Boss**<br>*"I've heard all eight of them. Here's what matters."* | Rummage mode only — channels the squad's perspectives on incoming reviewer feedback without dispatching them |
 
 ## Tiered dispatch
 
@@ -27,7 +28,7 @@ A fast Haiku triage pass classifies the change before the rampage begins, so the
 
 ## Rampage levels
 
-Squad selection. Override the default triage with a named squad. Levels are combinable — the union of all selected squads is dispatched.
+Squad selection (peer and self modes only). Override the default triage with a named squad. Levels are combinable — the union of all selected squads is dispatched. Rummage mode ignores levels entirely.
 
 | Flag | Squad | When to use |
 |------|-------|-------------|
@@ -38,14 +39,15 @@ Squad selection. Override the default triage with a named squad. Levels are comb
 
 ## Rampage types
 
-Session modifiers. Change what happens with the findings after merge. A type combines with any level (or no level). The two types are **mutually exclusive** — one is for scouting, the other for fixing.
+Session modifiers. Change what happens with the findings — or replace the review pipeline entirely. Types are **mutually exclusive**.
 
 | Flag | Behavior |
 |------|----------|
 | `--casing-the-joint` | Dry run — findings shown in terminal, nothing posted to GitHub |
 | `--mirror-check` | Self-review your own PR — walks findings interactively (fix / skip / defer each), ends with commit + post-deferred prompts. Requires PR's branch checked out locally. |
+| `--rummage` | Process incoming reviewer feedback — Boss channels raccoon perspectives per comment, you decide fix / respond / explain / skip. Replies posted in your voice, not raccoon voice. Requires PR's branch checked out locally. |
 
-Combine a level with a type:
+Examples:
 
 ```text
 /rampaging-raccoons 1234 --bomb-sniffer
@@ -53,11 +55,12 @@ Combine a level with a type:
 /rampaging-raccoons 1234 --trash-compactor --night-shift
 /rampaging-raccoons 1234 --mirror-check
 /rampaging-raccoons 1234 --full-rampage --mirror-check
+/rampaging-raccoons 1234 --rummage
 ```
 
 ## Model usage
 
-All raccoon agents run on **Opus** by default. Triage and fingerprinting use **Haiku**. To override, add `agent-model: sonnet` to `my-context.md` — this forces all agents to Sonnet.
+All review agents (1-8) run on **Opus** by default. Boss always runs on **Opus** regardless of override. Triage and fingerprinting use **Haiku**. To override review agents, add `agent-model: sonnet` to `my-context.md` — this forces agents 1-8 to Sonnet.
 
 ## Install
 
@@ -90,4 +93,6 @@ Drop a new `.md` file in `agents/` to add a perspective. Remove one to retire it
 
 ## Architecture
 
-The skill is split into three layers: `engine.md` (generic orchestration pipeline — gather, dispatch, merge, post), `persona.md` (raccoon-specific roster, dispatch strategy, prompt template, review voice), and `merge-prompt.md` (dedicated merge agent instructions). `SKILL.md` is a thin entry point that loads them.
+The engine supports three branches — **peer**, **self**, and **rummage** — determined by the type flag. Peer and self share the same 6-step pipeline (gather, triage, dispatch, merge, confirm, post) and differ only in how findings are presented and applied. Rummage is a fundamentally different pipeline: Boss processes reviewer comments one at a time instead of dispatching the squad.
+
+The skill is split into layers: `engine.md` (branch routing and orchestration pipeline), `persona.md` (raccoon roster, dispatch strategy, prompt templates, review voice), `merge-prompt.md` (merge agent instructions), and `triage-prompt.md` (Haiku classification prompt). `SKILL.md` is a thin entry point that loads them.
