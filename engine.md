@@ -1,8 +1,20 @@
 # Engine — Multi-Agent Review Orchestration Pipeline
 
-Generic orchestration pipeline for dispatching parallel review agents, merging
-findings, and posting a single GitHub review. Persona-agnostic — all
-personality, agent rosters, and dispatch tables live in `persona.md`.
+Generic orchestration pipeline for dispatching parallel review agents, merging findings, and posting a single GitHub review. Persona-agnostic — all personality, agent rosters, and dispatch tables live in `persona.md`.
+
+## Branches
+
+The engine supports three branches. The branch is determined by the rampage type flag (or lack thereof). All three share the same 6-step skeleton but diverge at well-defined points.
+
+| Branch | Flag | Input | Steps used | Output |
+|--------|------|-------|------------|--------|
+| **peer** | *(none)* or `--casing-the-joint` | PR diff | All 6 | GitHub review |
+| **self** | `--mirror-check` | PR diff (local branch) | All 6 (Step 5 = walkthrough) | Local edits + optional commit |
+| **rummage** | `--rummage` | PR reviewer comments | 1, 3, 5, 6 (skips 2 + 4) | GitHub replies + local edits |
+
+**Peer** and **self** share the same pipeline through Step 4 — they differ only in how findings are presented (Step 5) and posted (Step 6). **Rummage** is a fundamentally different pipeline: it fetches reviewer comments instead of dispatching the review squad, uses Boss to channel perspectives per comment, and skips triage and merge entirely.
+
+When `--rummage` is detected in the invocation context, jump directly to the **Rummage Branch** section below. Do not run the peer/self pipeline.
 
 ## Step 1: Gather
 
@@ -13,6 +25,9 @@ depends on Batch B.
 ### Batch A — run these in parallel
 
 **1. PR metadata**
+
+Always fetch fresh — never reuse metadata from a prior gather or session
+start. The PR body may have been updated between reviews.
 
 ```bash
 gh pr view $ARGUMENTS --json title,body,author,headRefName,baseRefName,additions,deletions,changedFiles,number --jq '.'
@@ -54,29 +69,24 @@ root.
 **6. Custom engineer context** — check if the skill's `my-context.md` has
 non-comment content. If so, read and include it.
 
-### Mirror check pre-flight (only if `--mirror-check` is set)
+### Local branch pre-flight (self and rummage branches)
 
-When `--mirror-check` is set, verify the PR's branch is currently checked out
-locally. Mirror check makes edits to the working tree, so it only makes sense
-on your own PR's branch.
+When `--mirror-check` or `--rummage` is set, verify the PR's branch is currently checked out locally. Both modes make edits to the working tree, so they only work on your own PR's branch.
 
 ```bash
 git branch --show-current
 ```
 
-Compare the output against `headRefName` from the PR metadata fetched in
-Batch A.
+Compare the output against `headRefName` from the PR metadata fetched in Batch A.
 
-- **If they match:** continue to Batch B normally.
+- **If they match:** continue normally.
 - **If they don't match:** error and exit:
 
-  > ❌ Mirror check needs PR #<number>'s branch (`<headRefName>`) checked out
-  > locally. You're on `<current_branch>`. Either check out the PR's branch
-  > or use `--casing-the-joint` if you just want to preview without editing.
+  > ❌ This mode needs PR #<number>'s branch (`<headRefName>`) checked out locally. You're on `<current_branch>`. Check out the PR's branch first, or use `--casing-the-joint` for read-only scouting.
 
-  Do not proceed to Batch B. Return immediately.
+  Do not proceed. Return immediately.
 
-If `--mirror-check` is not set, skip this check entirely.
+If neither `--mirror-check` nor `--rummage` is set, skip this check entirely.
 
 ### Batch B — after Batch A completes
 
@@ -337,8 +347,9 @@ Tier counts come from the merge agent's `tier` field on each finding
 
 #### Phase 2: Walk through findings
 
-For each finding (in importance order, same sort as default mode), present
-the finding in this format:
+For each finding (in importance order, same sort as default mode):
+
+**First, output the full finding as text** — the engineer must be able to read the finding before being asked to act on it. Do not call AskUserQuestion until the finding is fully displayed:
 
 ```
 ─── Finding <i> of <N> ─────────────────────────────────
@@ -349,26 +360,23 @@ the finding in this format:
 
 Suggested fix:
 <suggestion code, indented two spaces; omit this section if no suggestion>
-
-What would you like to do?
 ```
 
-Use AskUserQuestion with three options:
+**Then, after the finding text is visible**, use AskUserQuestion with three options:
 
-- **Fix** — open the file at the cited line, present the relevant code in
-  the terminal, and walk through the change with the engineer. Conversational
-  edit:
+- **Fix** — open the file at the cited line, present the relevant code in the terminal, and walk through the change with the engineer. Conversational edit:
   - Show the cited code with 5 lines of context above and below
   - Restate the suggestion (or describe the change if no suggestion)
   - Ask the engineer to confirm, propose an alternative, or skip
   - Apply the agreed-upon edit using the Edit tool
   - Confirm the edit and move to the next finding
+- **Explain** — dig into the finding before deciding. Read the file at the cited line with 15-20 lines above and below (15-20 lines above and below), explain what the raccoon(s) flagged and why it matters, show the relevant code path, and surface any additional context from the diff or repo that helps the engineer evaluate. After explaining, re-present the same four options (Fix / Explain / Skip / Defer) so the engineer can decide with full understanding. The engineer may also type freeform questions via "Other" to continue the conversation — keep discussing until they pick an action.
 - **Skip** — record `mirror_disposition: "skipped"` for this finding, move on
 - **Defer** — record `mirror_disposition: "deferred"` for this finding, move on
 
-After each finding, increment the counter and present the next one. Track
-session state (fixed, skipped, deferred counts and which findings are in
-each bucket).
+The engineer can also use **Other** to type freeform questions or comments about the finding — respond conversationally, then re-present the options.
+
+After each finding, increment the counter and present the next one. Track session state (fixed, skipped, deferred counts and which findings are in each bucket).
 
 #### Phase 3: End-of-walkthrough prompts
 
@@ -517,6 +525,232 @@ findings behavior, closer, tone rules, and verdict lines.
 - If the review API returns 422, identify the invalid comment(s), remove them,
   and retry with the remaining valid ones. If posting fails entirely, print
   findings to the terminal so the work is not lost.
+
+## Rummage Branch
+
+When `--rummage` is detected, run this pipeline instead of the peer/self Steps 1-6. Rummage processes incoming reviewer feedback through Boss's perspectives, one comment at a time.
+
+Print: *"🦝 Rummage mode — Boss is reading through the feedback."*
+
+### Rummage Step 1: Gather
+
+Run these operations in parallel:
+
+**1. PR metadata** — same as peer/self Batch A item 1.
+
+**2. Diff fetch** — same as peer/self Batch A item 2. Boss needs the full diff to evaluate whether reviewer comments are valid.
+
+**3. Full comment fetch** — fetch all three comment types with full bodies (not truncated):
+
+Inline review comments:
+
+```bash
+gh api repos/{owner}/{repo}/pulls/$ARGUMENTS/comments --paginate
+```
+
+Review-level comments (reviews with bodies):
+
+```bash
+gh api repos/{owner}/{repo}/pulls/$ARGUMENTS/reviews --paginate
+```
+
+Discussion comments (issue-level):
+
+```bash
+gh api repos/{owner}/{repo}/issues/$ARGUMENTS/comments --paginate
+```
+
+**4. Local branch pre-flight** — verify the PR's branch is checked out locally (same check as self branch).
+
+**5. Repo conventions + custom context** — same as peer/self Batch A items 5-6.
+
+After Batch A completes:
+
+**6. Noise reduction + language detection** — same as peer/self Batch B items 7 and 10. Boss needs clean diff and language hints for context. Skip the diff line map (item 8) and size check (item 9) — rummage doesn't post inline review comments. Skip Batch C (blast-radius) — not relevant for feedback processing.
+
+### Rummage Step 3: Build comment inventory
+
+Parse the fetched comments into a structured inventory. For each comment, extract:
+
+- `id` — GitHub comment ID
+- `type` — `inline_review`, `review_body`, or `discussion`
+- `author` — who left it
+- `body` — full comment text
+- `path` — file path (inline only, null for others)
+- `line` — line number (inline only, null for others)
+- `state` — resolved/unresolved (where available)
+- `created_at` — timestamp
+- `in_reply_to` — parent comment ID if this is a thread reply
+
+**Filter to actionable comments:**
+
+- Exclude comments authored by the PR author (you don't need to respond to your own comments)
+- Exclude bot comments (CI bots, linters, automated checks)
+- Exclude comments that are already resolved
+- Exclude comments where the PR author has already replied substantively (not just "done" or "fixed")
+- Group thread replies with their parent — present the full thread as one unit
+
+**Categorize remaining comments:**
+
+- **Blocking** — `CHANGES_REQUESTED` reviews, comments containing "must", "required", "blocking", or "needs to"
+- **Actionable** — suggestions, questions, code review comments with substance
+- **Informational** — approvals, FYI comments, positive feedback
+
+**Sort order:** Blocking first, then actionable, then informational. Within each category, inline comments before review-level before discussion.
+
+Print the inventory summary:
+
+```
+🦝 Found <N> comments to rummage through.
+   Blocking: <count>
+   Actionable: <count>
+   Informational: <count>
+   (Skipped: <count> already addressed)
+```
+
+If zero actionable comments remain after filtering, print: *"🦝 Nothing to rummage through — all feedback is addressed or informational."* and exit.
+
+### Rummage Step 5: Interactive walkthrough
+
+For each comment in the sorted inventory, run this loop:
+
+#### Present the comment and Boss's take
+
+**First, output the comment and Boss's perspective as text** — the engineer must be able to read everything before being asked to act. Do not call AskUserQuestion until all of the following is fully displayed.
+
+**Step A: Show the comment:**
+
+```
+─── Comment <i> of <N> (<category>) ──────────────────
+💬 <author> on <path>:<line> (or "PR-level"):
+
+<full comment body>
+
+<thread context if replies exist>
+```
+
+**Step B: Dispatch Boss** — launch one Agent with `model: "opus"` using the Boss Prompt Template from `persona.md`. Pass it:
+
+- The reviewer's comment (full body + thread)
+- Code context (read the file at the commented line, 10 lines above and below)
+- The cleaned diff
+- Language hints
+- Repo CLAUDE.md
+- Custom context (my-context.md)
+
+**Step C: Show Boss's take** — parse Boss's `PERSPECTIVE:` block and print it:
+
+```
+🦝 Boss (channeling <channeled tags>):
+<take>
+
+Recommendation: <recommendation>
+<reasoning>
+```
+
+**Then, after both the comment and Boss's take are visible**, use AskUserQuestion with these options:
+
+- **Fix** — open the file at the cited line, walk through the change conversationally (same as mirror-check's fix flow: show context, propose edit, confirm, apply Edit tool). After fixing, draft a reply comment acknowledging the fix.
+- **Respond** — choose a response type, then draft the reply:
+  - **Discuss** — draft a clarifying question or discussion response. Optionally pull in a specific raccoon for a deeper take: show the channeled tags from Boss's response and ask which raccoon to consult. If the engineer picks one, dispatch that raccoon as a single Agent with the comment + code context, present the deeper take, then redraft the reply.
+  - **Acknowledge** — the reviewer has a point but it's out of scope or a known tradeoff. Draft a response that agrees and explains.
+  - **Decline** — push back respectfully. Boss's take informs the pushback. Draft a response explaining why the current approach is preferred.
+- **Explain** — dig into the comment and Boss's take before deciding. Read the file at the commented line with 15-20 lines above and below, explain what the reviewer is asking and why Boss channeled the perspectives it did, surface any additional context from the diff or repo. After explaining, re-present the same options so the engineer can decide with full understanding. The engineer may also type freeform questions via "Other" to continue the conversation.
+- **Skip** — move on, handle later.
+
+The engineer can also use **Other** to type freeform questions or comments — respond conversationally, then re-present the options.
+
+For Fix and all Respond sub-types: show the draft reply and use AskUserQuestion:
+
+- **Post** — post the reply to GitHub immediately
+- **Edit** — engineer provides changes, re-present, ask again
+- **Save for later** — save the reply, post all at the end
+
+#### Track progress
+
+For each comment, record:
+
+- `disposition` — `fixed`, `discussed`, `acknowledged`, `declined`, `skipped`
+- `reply_draft` — the composed reply text (null if skipped)
+- `reply_posted` — whether the reply was posted immediately
+- `file_edited` — whether a file was changed (fix only)
+
+### Rummage Step 6: Wrap up
+
+After all comments are walked, print the summary:
+
+```
+🦝 Rummage complete.
+
+  Fixed: <count>
+  Discussed: <count>
+  Acknowledged: <count>
+  Declined: <count>
+  Skipped: <count>
+```
+
+**Prompt 1: Unposted replies** (only if any replies were saved for later)
+
+> Post <N> saved replies now?
+
+Use AskUserQuestion:
+
+- **Post all** — post each saved reply to the appropriate GitHub comment thread
+- **Review first** — show each saved reply, let the engineer edit/post/discard one at a time
+- **Discard** — don't post any
+
+**Prompt 2: Commit disposition** (only if any files were edited)
+
+Same as mirror-check's Prompt 2:
+
+> You fixed <N> comments. What about the changes?
+
+- **Leave as-is** — don't touch git
+- **Stage only** — `git add` the changed files
+- **Commit** — stage and commit with message: `Address reviewer feedback (N fixes)`
+
+### Rummage reply formatting
+
+Replies posted by rummage mode should sound like the engineer, not like a raccoon. No emoji tags, no raccoon personality in the posted reply. The raccoons advise privately — the public response is professional.
+
+Keep replies concise:
+
+- **Fix:** "Good catch — fixed in <sha or 'latest push'>." or "Fixed, thanks." If the fix was non-obvious, briefly explain what changed.
+- **Discuss:** The clarifying question, written directly.
+- **Acknowledge:** "Agreed — tracking this separately in <ticket/issue>." or "Good point, though I think it's out of scope for this PR because <reason>."
+- **Decline:** "I considered this, but <reason the current approach is preferred>. Happy to discuss further."
+
+### Rummage findings emission
+
+After the walkthrough, write a rummage-specific JSON to `/tmp/raccoons-rummage-<repo>-<pr>.json`:
+
+```json
+{
+  "repo": "mikasa",
+  "number": 12345,
+  "head_sha": "abc123",
+  "branch": "rummage",
+  "rummaged_at": "2026-04-17T14:30:00Z",
+  "comments_total": 12,
+  "comments_filtered": 8,
+  "comments": [
+    {
+      "github_comment_id": 123456,
+      "type": "inline_review",
+      "author": "reviewer-name",
+      "path": "app/services/foo.rb",
+      "line": 42,
+      "body": "...",
+      "category": "blocking",
+      "disposition": "fixed",
+      "channeled": ["🌪️ Chaos Carol", "🥃 Cranky Hank"],
+      "recommendation": "fix",
+      "reply_posted": true,
+      "file_edited": true
+    }
+  ]
+}
+```
 
 ## Auto Mode
 

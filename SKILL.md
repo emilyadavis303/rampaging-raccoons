@@ -2,30 +2,28 @@
 name: rampaging-raccoons
 allowed-tools: Bash(gh pr diff:*), Bash(gh pr view:*), Bash(gh api:*), Bash(cat <<*), Bash(wc *), Bash(python3 *), Bash(rm /tmp/raccoons-review-response-*), Read, Write, Glob, Grep, Agent, AskUserQuestion
 argument-hint: <pr-number>
-description: Multi-perspective PR review — dispatches 8 raccoon agents in parallel, merges findings, posts one GitHub review
+description: Multi-perspective PR review — dispatches 8 raccoon agents in parallel, merges findings, posts one GitHub review. With --rummage, processes incoming reviewer feedback through Boss.
 ---
 
 # Rampaging Raccoons
 
 Print: *"🦝 Releasing the raccoons on PR #$ARGUMENTS..."*
 
-Multi-perspective code review that dispatches 8 parallel agents, each with a
-distinct personality and focus area. Findings are merged, deduplicated, and
-posted as one GitHub review with inline comments.
+Multi-perspective code review with three modes:
 
-**Prerequisite:** Run this skill from inside the target repo directory (e.g.,
-`~/code/homebot/mikasa`), not from a parent directory. The `gh` commands need
-git context to resolve the repo.
+- **Peer review** (default) — dispatches 8 parallel agents, merges findings, posts one GitHub review
+- **Self review** (`--mirror-check`) — same agents, interactive fix/skip/defer walkthrough
+- **Rummage** (`--rummage`) — Boss channels raccoon perspectives on incoming reviewer feedback, one comment at a time
 
-Read `engine.md` for the orchestration pipeline. Read `persona.md` for the
-raccoon-specific configuration (agent roster, dispatch strategy, prompt
-template, review voice). Follow the engine steps, using the persona for agent
-selection, prompt construction, and review formatting.
+**Prerequisite:** Run this skill from inside the target repo directory (e.g., `~/code/homebot/mikasa`), not from a parent directory. The `gh` commands need git context to resolve the repo.
+
+Read `engine.md` for the orchestration pipeline. Check the **Branches** section at the top to determine which pipeline to run based on the flags. Read `persona.md` for the raccoon-specific configuration (agent roster, dispatch strategy, prompt templates, review voice).
 
 Supporting files read by the engine:
-- `triage-prompt.md` — Haiku triage classification prompt
-- `merge-prompt.md` — merge agent instructions
-- `agents/*.md` — individual raccoon agent perspectives
+
+- `triage-prompt.md` — Haiku triage classification prompt (peer/self only)
+- `merge-prompt.md` — merge agent instructions (peer/self only)
+- `agents/*.md` — individual raccoon agent perspectives (1-8 for peer/self, Boss for rummage)
 - `languages/*.md` — language-specific review patterns
 - `my-context.md` — optional custom engineer context
 
