@@ -15,15 +15,11 @@ Multi-perspective PR review skill for [Claude Code](https://claude.com/claude-co
 | 🧪 **Squinty**<br>*"So much green, so little confidence."* | Tests-as-code — does this test prove what it claims? |
 | 🦝 **Boss**<br>*"I've heard all seven of them. Here's what matters."* | Rummage mode only — channels the squad's perspectives on incoming reviewer feedback without dispatching them |
 
-## Tiered dispatch
+## Smart dispatch
 
-A fast Haiku triage pass classifies the change before the rampage begins, so the squad scales to the work:
+A fast Haiku triage pass reads the diff and picks which raccoons should review it — floor of 2, ceiling of all 7. No fixed change-type table; the dispatcher matches what's actually in the diff to who will produce useful findings. A mutative auth change pulls in Carol/Oracle/Nosy; a pure rename pulls in just Carol/Bandit; a test-only PR pulls in Squinty/Oracle. Override with `--full-rampage` to deploy everyone regardless.
 
-| Change type | Raccoons dispatched |
-|-------------|---------------------|
-| Mutative (changes existing behavior) | All 8 — full rampage, plus a blast-radius scan for downstream callers |
-| Additive (new code only) | Chaos Carol, The Oracle, Inspector Bandit, Cranky Hank, Nosy, Squinty |
-| Mechanical (renames, formatting, moves) | Chaos Carol, Inspector Bandit |
+A blast-radius scan runs separately whenever modified signatures are detected in the diff — independent of dispatch.
 
 ## Rampage levels
 

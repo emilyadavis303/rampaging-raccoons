@@ -193,39 +193,40 @@ If infra files represent <80% of changed lines (mixed PR), run triage normally.
 
 Launch an Agent with `model: "haiku"` using the prompt from the skill's
 `triage-prompt.md`, passing in the PR title, description, and cleaned diff. The
-agent returns a JSON object:
+triage prompt contains the roster + each raccoon's focus, so the Haiku agent
+picks the squad directly. The agent returns a JSON object:
 
 ```json
 {
-  "change_type": "mechanical | additive | mutative",
+  "squad": ["chaos-carol", "the-oracle", "inspector-bandit"],
   "modified_identifiers": ["ClassName#method_name"],
   "reasoning": "one sentence"
 }
 ```
 
-Print the result. The engine does not interpret the triage categories — it
-passes the `change_type` to Step 3, where the persona's dispatch table maps it
-to the appropriate squad.
+Validate the returned slugs against the roster in `persona.md`. If any slug is
+unknown, drop it and continue with the rest. If `squad` is empty after
+validation, fall back to dispatching all 7 reviewers (better noisy than blind).
+
+Print the result:
+
+> 🦝 Deploying **N raccoons** (<names>). <reasoning>
 
 ## Step 3: Dispatch
 
-Dispatch agents based on the triage result from Step 2 — unless a dispatch
-override flag is present. Each agent runs as a background Agent call with
-`run_in_background: true`.
+Dispatch agents based on the triage result from Step 2 — unless `--full-rampage`
+is set. Each agent runs as a background Agent call with `run_in_background: true`.
 
-Read the Agent Roster and Dispatch Strategy from `persona.md` to determine
-which agents to launch and how to select them.
+Read the Agent Roster and Dispatch Strategy from `persona.md`.
 
 ### Dispatch logic
 
 1. **Read the persona's roster and dispatch strategy** from `persona.md`.
-2. **If a rampage level flag is in the invocation context**, use the persona's
-   flag parsing rules to determine the squad directly — **skip Step 2
-   (Triage)** entirely. If multiple flags are present, dispatch the **union**
-   of their squads (deduplicated). Print the override announcement using the
-   persona's voice.
-3. **Otherwise, map the triage result** through the persona's tiered dispatch
-   table to select which agents to dispatch.
+2. **If `--full-rampage` is in the invocation context**, **skip Step 2
+   (Triage)** entirely and dispatch all 7 reviewers. Print:
+   > 🦝 **Full rampage** — deploying all 7 raccoons.
+3. **Otherwise, use the `squad` list from triage** to select which agents to
+   dispatch.
 4. **Construct each agent's prompt** using the persona's Agent Prompt Template
    from `persona.md`. Read each dispatched agent's file from the skill's
    `agents/` directory.
@@ -856,7 +857,7 @@ When auto mode is requested, run the review without human confirmation:
 - Emit findings JSON for the caller (see below)
 - Return the review URL to the caller
 
-Auto mode uses tiered dispatch (same as interactive). Every finding gets posted.
+Auto mode uses smart dispatch (same as interactive). Every finding gets posted.
 
 ### How auto mode is signaled
 
@@ -866,9 +867,9 @@ carry mode flags. Auto mode is signaled by **the invoking context only**:
 
 - **Caller is a watcher skill.** The watcher invokes this skill with
   `args: "<pr-number>"` and includes "run in auto mode" (and optionally a
-  pinned dispatch tier) in the invocation message it sends after the Skill
-  call. If you see "auto mode" in the invocation context, run auto mode
-  regardless of `$ARGUMENTS`.
+  pinned squad) in the invocation message it sends after the Skill call. If
+  you see "auto mode" in the invocation context, run auto mode regardless of
+  `$ARGUMENTS`.
 - **User passes `--auto` themselves on the command line.** Claude Code may
   surface this as a separate hint in the invocation context (not inside
   `$ARGUMENTS`). Treat it the same way.
@@ -877,23 +878,22 @@ If `$ARGUMENTS` looks like it contains anything beyond a bare PR number
 (e.g., `"6928 --auto"`), trim it to the leading integer and warn the user
 that flags-in-args don't work — then proceed.
 
-### Pinned dispatch tier
+### Pinned squad
 
-When a watcher skill invokes this skill for a re-review, it pins the dispatch
-tier to whatever was used on the original review (so the same agent squad runs
-both times — otherwise correlation fights agent diversity). The pin is
-communicated as part of the invocation context.
+When a watcher skill invokes this skill for a re-review, it pins the squad
+to whatever ran on the original review (so the same agents run both times —
+otherwise correlation fights agent diversity). The pin is a list of raccoon
+slugs communicated as part of the invocation context.
 
-When you see a pinned tier in your invocation context:
+When you see a pinned squad in your invocation context:
 
-- **Skip Step 2 (Triage classification)** — do not call the triage agent for
-  the change-type classification
-- Use the pinned tier directly to select the agent squad in Step 3
+- **Skip Step 2 (Triage classification)** — do not call the triage agent
+- Use the pinned squad list directly in Step 3
 - Blast-radius runs in Step 1 Batch C as usual (based on signature detection
-  in the diff, not triage classification) — no special handling needed
+  in the diff) — no special handling needed
 - Still emit `modified_identifiers` in the findings JSON so the cache stays
   warm for next time
-- Print that triage was skipped due to a pinned re-review tier
+- Print that triage was skipped due to a pinned re-review squad
 
 ### Findings emission
 
@@ -905,7 +905,7 @@ After the review posts, write the parsed structured findings to
   "repo": "mikasa",
   "number": 12345,
   "head_sha": "abc123",
-  "dispatch_tier": "mutative | additive | mechanical",
+  "squad": ["chaos-carol", "the-oracle", "inspector-bandit"],
   "rampage_level": "<flag from persona's rampage levels, or null>",
   "mirror_check": {
     "fixed_count": 3,
@@ -946,6 +946,10 @@ After the review posts, write the parsed structured findings to
   inline comments on re-review.
 - `review_id` is the GitHub review object ID (numeric), used by callers that
   want to fetch the review's comments later.
+- `squad` is the list of raccoon slugs that actually ran for this review
+  (from triage's output, from `--full-rampage`, or from a pinned squad on
+  re-review). Callers cache this to pin the same squad on subsequent
+  re-reviews.
 - `modified_identifiers` is populated from the Step 1 Batch C signature scan
   when blast-radius ran, from triage when it didn't skip, or `[]` when neither
   applied. Callers may cache this for use in subsequent re-reviews.

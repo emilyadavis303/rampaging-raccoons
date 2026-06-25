@@ -28,20 +28,29 @@ All review agents (1-7) dispatch with `model: "opus"` by default. To override, a
 
 ## Dispatch Strategy
 
-### Triage-Based Tiered Dispatch
+### Smart Dispatch
 
-Default dispatch when no rampage level flag is set. Triage (Step 2) classifies
-the change, then the squad scales to match.
+Default dispatch when no rampage level flag is set. Triage (engine.md Step 2)
+reads the diff and picks the squad directly — no fixed change-type → squad
+table. The triage prompt is given the roster + each raccoon's focus, and
+returns a list of raccoon slugs that match what this diff actually needs.
 
-| Change type | Raccoons dispatched | Rationale |
-|------------|-------------------|-----------|
-| **Mutative** | All 8 (full rampage) | Changing existing behavior — maximum scrutiny |
-| **Additive** | Chaos Carol, The Oracle, Inspector Bandit, Cranky Hank, Nosy, Squinty (6) | New code needs correctness, maintainability, scope, architecture, observability, and test quality — less need for nit/clarity review |
-| **Mechanical** | Chaos Carol, Inspector Bandit (2) | Sanity check: does it break anything? Does it match the description? |
+Floor: 2 raccoons. Ceiling: all 7. Triage decides.
 
-Print which squad is deploying:
+The triage agent (Haiku, see `triage-prompt.md`) returns:
 
-> 🦝 Deploying **N raccoons** (<names>) for a **<change_type>** change.
+```json
+{
+  "squad": ["chaos-carol", "the-oracle", "nosy"],
+  "reasoning": "one sentence — why this squad fits this diff"
+}
+```
+
+The engine prints:
+
+> 🦝 Deploying **N raccoons** (<names>). <reasoning>
+
+If you want every raccoon regardless of triage, use `--full-rampage`.
 
 ### Rampage Levels
 
