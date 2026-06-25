@@ -43,8 +43,8 @@ If two findings reference the same file and same line (within +/-3 lines) and
 describe the same underlying issue, keep the better-written one. Merge their
 tags (e.g., `🌪️ Chaos Carol · 🔮 The Oracle`).
 
-If all 8 raccoons flag the same issue, use:
-`All eight raccoons 🥒🌪️🥃🔦🔮🚧📟🧪`
+If all 7 raccoons flag the same issue, use:
+`All seven raccoons 🥒🌪️🥃🔮🚧📟🧪`
 
 ### 3. Strip existing
 
