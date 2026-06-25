@@ -45,19 +45,16 @@ Print which squad is deploying:
 
 ### Rampage Levels
 
-Squad selection. Override the default triage-based dispatch with a named squad. **Peer and self branches only** — rummage mode ignores levels (Boss handles everything).
+Squad override. The default is for triage to pick the squad (see Dispatch Strategy below). The one level flag tells the engine to skip triage and deploy everyone. **Peer and self branches only** — rummage mode ignores levels (Boss handles everything).
 
 | Flag | Squad | Use case |
 |------|-------|----------|
 | *(no flag)* | Triage decides (default) | Let the raccoons figure it out |
-| `--full-rampage` | All 8 | Maximum scrutiny regardless of triage |
-| `--bomb-sniffer` | Chaos Carol, Inspector Bandit | Does it break anything? Does it match the description? |
-| `--trash-compactor` | Nit Pickles, Cranky Hank, Lil' Whiskers, Squinty | Style, architecture, clarity, tests |
-| `--night-shift` | Chaos Carol, The Oracle, Nosy | Will this page someone at 3am? |
+| `--full-rampage` | All 7 | Maximum scrutiny regardless of triage |
 
 ### Rampage Types
 
-Session modifiers. Change what happens with the findings — or replace the review pipeline entirely. A type combines with any level (or no level). Types are **mutually exclusive**.
+Session modifiers. Change what happens with the findings — or replace the review pipeline entirely. A type combines with `--full-rampage` (or no level). Types are **mutually exclusive**.
 
 | Flag | Branch | Behavior |
 |------|--------|----------|
@@ -76,31 +73,25 @@ a bare integer, trim to the leading integer and warn the user.
 
 **Levels (squad selection):**
 
-1. If any rampage level flag is present, **skip Step 2 (Triage)** entirely —
-   the level determines the squad directly.
-2. If multiple level flags are present (e.g., `--trash-compactor --night-shift`),
-   dispatch the **union** of their squads (deduplicated). In this example:
-   Nit Pickles, Cranky Hank, Lil' Whiskers, Squinty, Chaos Carol, The Oracle,
-   Nosy (7 raccoons).
-3. `--full-rampage` with any other level flag = all 8 (full-rampage wins).
+1. If `--full-rampage` is present, **skip Step 2 (Triage)** entirely — deploy all 7 reviewers.
 
 **Types (session modifiers):**
 
-4. Types are **mutually exclusive**. If more than one type is passed, error and exit:
+2. Types are **mutually exclusive**. If more than one type is passed, error and exit:
    *"Pick one mode: --casing-the-joint (scout), --mirror-check (self-review), or --rummage (feedback). They serve different goals."*
-5. `--casing-the-joint`: execute Steps 1-5 normally, **skip Step 6** (no posting). Print: *"🔍 Casing the joint — findings above, nothing posted."*
-6. `--mirror-check`: replace Step 5 with the self-review walkthrough (see engine.md Step 5). Requires the PR's headRefName to be the currently checked-out branch — engine.md does this pre-flight check after Batch A.
-7. `--rummage`: **replace the entire pipeline** with the rummage branch (see engine.md Rummage Branch). Ignores rampage level flags entirely — Boss handles everything. Requires the PR's headRefName to be the currently checked-out branch.
-8. A type combines with any level (or no level) — **except `--rummage`**, which ignores levels. Examples:
+3. `--casing-the-joint`: execute Steps 1-5 normally, **skip Step 6** (no posting). Print: *"🔍 Casing the joint — findings above, nothing posted."*
+4. `--mirror-check`: replace Step 5 with the self-review walkthrough (see engine.md Step 5). Requires the PR's headRefName to be the currently checked-out branch — engine.md does this pre-flight check after Batch A.
+5. `--rummage`: **replace the entire pipeline** with the rummage branch (see engine.md Rummage Branch). Ignores `--full-rampage` entirely — Boss handles everything. Requires the PR's headRefName to be the currently checked-out branch.
+6. A type combines with `--full-rampage` (or no level) — **except `--rummage`**, which ignores levels. Examples:
    - `--mirror-check` alone → triage decides squad, then walkthrough
-   - `--full-rampage --mirror-check` → all 8 raccoons, then walkthrough
-   - `--bomb-sniffer --casing-the-joint` → 2 raccoons, dry run preview
+   - `--full-rampage --mirror-check` → all 7 raccoons, then walkthrough
+   - `--casing-the-joint` alone → triage decides squad, dry run preview
    - `--rummage` → Boss only, no squad dispatch
-   - `--rummage --full-rampage` → warn that levels are ignored in rummage mode, proceed with Boss only
+   - `--rummage --full-rampage` → warn that level is ignored in rummage mode, proceed with Boss only
 
-When a level overrides triage, print:
+When `--full-rampage` overrides triage, print:
 
-> 🦝 **<level>** — deploying **N raccoons** (<names>).
+> 🦝 **Full rampage** — deploying all 7 raccoons.
 
 When a type is set, print after the level line:
 

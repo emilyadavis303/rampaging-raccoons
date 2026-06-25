@@ -1,8 +1,8 @@
 ---
 name: rampaging-raccoons
 allowed-tools: Bash(gh pr diff:*), Bash(gh pr view:*), Bash(gh api:*), Bash(cat <<*), Bash(wc *), Bash(python3 *), Bash(rm /tmp/raccoons-review-response-*), Read, Write, Glob, Grep, Agent, AskUserQuestion
-argument-hint: <pr-number> [--full-rampage|--bomb-sniffer|--trash-compactor|--night-shift] [--casing-the-joint|--mirror-check|--rummage]
-description: Multi-perspective PR review — dispatches 8 raccoon agents in parallel, merges findings, posts one GitHub review. With --rummage, processes incoming reviewer feedback through Boss.
+argument-hint: <pr-number> [--full-rampage] [--casing-the-joint|--mirror-check|--rummage]
+description: Multi-perspective PR review — dispatches up to 7 raccoon agents in parallel, merges findings, posts one GitHub review. With --rummage, processes incoming reviewer feedback through Boss.
 ---
 
 # Rampaging Raccoons
@@ -11,7 +11,7 @@ Print: *"🦝 Releasing the raccoons on PR #$ARGUMENTS..."*
 
 Multi-perspective code review with three modes:
 
-- **Peer review** (default) — dispatches 8 parallel agents, merges findings, posts one GitHub review
+- **Peer review** (default) — dispatches up to 7 parallel agents, merges findings, posts one GitHub review
 - **Self review** (`--mirror-check`) — same agents, interactive fix/skip/defer walkthrough
 - **Rummage** (`--rummage`) — Boss channels raccoon perspectives on incoming reviewer feedback, one comment at a time
 

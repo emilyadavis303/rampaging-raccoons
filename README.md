@@ -27,14 +27,11 @@ A fast Haiku triage pass classifies the change before the rampage begins, so the
 
 ## Rampage levels
 
-Squad selection (peer and self modes only). Override the default triage with a named squad. Levels are combinable — the union of all selected squads is dispatched. Rummage mode ignores levels entirely.
+Squad override (peer and self modes only). The default is for triage to pick the squad. Use `--full-rampage` to skip triage and deploy everyone. Rummage mode ignores levels entirely.
 
 | Flag | Squad | When to use |
 |------|-------|-------------|
-| `--full-rampage` | All 8 | Maximum scrutiny regardless of triage |
-| `--bomb-sniffer` | Chaos Carol, Inspector Bandit | Quick check — does it break anything? |
-| `--trash-compactor` | Nit Pickles, Cranky Hank, Lil' Whiskers, Squinty | Code quality pass — style, architecture, clarity, tests |
-| `--night-shift` | Chaos Carol, The Oracle, Nosy | The 3am crew — will this page someone? |
+| `--full-rampage` | All 7 | Maximum scrutiny regardless of triage |
 
 ## Rampage types
 
@@ -49,9 +46,9 @@ Session modifiers. Change what happens with the findings — or replace the revi
 Examples:
 
 ```text
-/rampaging-raccoons 1234 --bomb-sniffer
+/rampaging-raccoons 1234
 /rampaging-raccoons 1234 --casing-the-joint
-/rampaging-raccoons 1234 --trash-compactor --night-shift
+/rampaging-raccoons 1234 --full-rampage
 /rampaging-raccoons 1234 --mirror-check
 /rampaging-raccoons 1234 --full-rampage --mirror-check
 /rampaging-raccoons 1234 --rummage
