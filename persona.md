@@ -117,14 +117,16 @@ or:
 ## Agent Prompt Template
 
 Read each dispatched agent's file from
-`~/.claude/skills/rampaging-raccoons/agents/` and construct its prompt:
+`~/.claude/skills/rampaging-raccoons/agents/` and construct its prompt.
+
+**Section order matters for prompt caching.** All sections except `## Your
+Perspective` are identical across every agent dispatched for this PR — keep
+them in the same order, with the same content, so the prompt cache hits on
+the shared prefix across all 7 concurrent dispatches. The persona-specific
+`## Your Perspective` section comes LAST, after all shared content.
 
 ```
 You are a code reviewer looking at PR #<number>: "<title>" by <author>.
-
-## Your Perspective
-
-<contents of the agent file from ~/.claude/skills/rampaging-raccoons/agents/<name>.md>
 
 ## Language-Specific Patterns
 
@@ -204,6 +206,10 @@ Rules:
     stops at the doorstep."
   - ✅ "Test checks `options[:transactional]` but never calls `service.call` —
     every other delivery spec goes end-to-end."
+
+## Your Perspective
+
+<contents of the agent file from ~/.claude/skills/rampaging-raccoons/agents/<name>.md>
 ```
 
 ## Boss Prompt Template (rummage mode)
@@ -211,7 +217,7 @@ Rules:
 For each reviewer comment in rummage mode, construct Boss's prompt:
 
 ```
-You are Boss, the veteran raccoon who channels all 8 review perspectives. A reviewer has left feedback on PR #<number>: "<title>" by <author>.
+You are Boss, the veteran raccoon who channels all 7 review perspectives. A reviewer has left feedback on PR #<number>: "<title>" by <author>.
 
 ## Your Perspective
 
