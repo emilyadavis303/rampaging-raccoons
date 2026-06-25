@@ -17,13 +17,14 @@ Multi-perspective code review with three modes:
 
 **Prerequisite:** Run this skill from inside the target repo directory (e.g., `~/code/homebot/mikasa`), not from a parent directory. The `gh` commands need git context to resolve the repo.
 
-Read `engine.md` for the orchestration pipeline. Check the **Branches** section at the top to determine which pipeline to run based on the flags. Read `persona.md` for the raccoon-specific configuration (agent roster, dispatch strategy, prompt templates, review voice).
+Read `engine.md` for the peer/self orchestration pipeline, or `rummage.md` for the rummage pipeline. Check `engine.md`'s **Branches** section at the top to determine which one applies based on the flags. Read `persona.md` for the raccoon-specific configuration (agent roster, dispatch strategy, prompt templates, review voice).
 
 Supporting files read by the engine:
 
-- `triage-prompt.md` — Haiku triage classification prompt (peer/self only)
+- `triage-prompt.md` — Haiku triage prompt (peer/self only — picks the squad for this PR)
 - `merge-prompt.md` — merge agent instructions (peer/self only)
-- `agents/*.md` — individual raccoon agent perspectives (1-8 for peer/self, Boss for rummage)
+- `rummage.md` — rummage branch pipeline (rummage only)
+- `agents/*.md` — individual raccoon agent perspectives (7 reviewers for peer/self, Boss for rummage)
 - `languages/*.md` — language-specific review patterns
 - `my-context.md` — optional custom engineer context
 
