@@ -335,31 +335,12 @@ After all agents return:
 3. **Parse the returned JSON** — if the merge agent returns malformed JSON
    (fails `JSON.parse` or equivalent), retry the merge agent once with the same
    inputs. If the second attempt also fails, fall back to presenting raw agent
-   outputs to the user in Step 5 (skip fingerprinting).
+   outputs to the user in Step 5.
 
-4. **Fingerprint** — for each finding in the merge agent's JSON, generate a
-   normalized issue token set used for correlating findings across re-reviews.
-   This step stays in the orchestrator, not in the merge agent.
-
-   Launch one Agent with `model: "haiku"` and pass it all finding bodies in a
-   single batched prompt. Ask it to return a JSON array, one entry per finding,
-   each with 4-8 kebab-case tokens describing the *kind* of issue (not the
-   specific identifier names). Examples:
-
-   - `["nil-template-identifier", "no-validation", "silent-passthrough"]`
-   - `["compact-vs-compact-blank", "behavior-change", "filter-semantics"]`
-   - `["test-passes-for-wrong-reason", "hardcoded-default-value"]`
-
-   Tokens should be stable across phrasings of the same concern. Do NOT include
-   agent names, file paths, or line numbers in the tokens.
-
-   Attach the token list to each finding as `fingerprint_tokens`. Also derive
-   and attach `file_basename` (just the filename, no path). Assign each finding
-   a stable `id` of the form `f_001`, `f_002`, ... in sort order.
-
-   If the Haiku call fails or returns malformed JSON, fall back to an empty
-   token list — findings still post normally; only re-review correlation is
-   degraded.
+Re-review dedup happens via the existing-comment fetch in Step 1 Batch A
+(injected into each agent's prompt as "Do NOT duplicate any of these"). No
+fingerprinting needed — the agents see the prior comments by body and skip
+them.
 
 ## Step 5: Confirm
 
@@ -938,11 +919,8 @@ After the review posts, write the parsed structured findings to
   "posted_at": "2026-04-15T18:39:21Z",
   "findings": [
     {
-      "id": "f_001",
       "file": "app/services/foo.rb",
       "line": 42,
-      "file_basename": "foo.rb",
-      "fingerprint_tokens": ["nil-template-identifier", "no-validation"],
       "tags": ["tag1", "tag2"],
       "body": "...",
       "suggestion": "next unless client",
