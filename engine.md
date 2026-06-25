@@ -231,8 +231,9 @@ Read the Agent Roster and Dispatch Strategy from `persona.md`.
    from `persona.md`. Read each dispatched agent's file from the skill's
    `agents/` directory.
 5. **Launch all selected agents** as background Agent calls with the model
-   specified by the persona (default `model: "opus"`, overridable via
-   `agent-model` in `my-context.md`). Wait for all to complete.
+   specified by the persona (default `model: "sonnet"`, overridable to
+   `opus` via `agent-model: opus` in `my-context.md`). Wait for all to
+   complete.
 
 ### Diff content rules
 

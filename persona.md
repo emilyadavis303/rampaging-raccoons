@@ -24,7 +24,7 @@ Multi-perspective code review squad: 8 raccoon agents with distinct personalitie
 
 Agents 1-7 are **reviewers** — they scan diffs and emit findings. Boss is the **rummage raccoon** — channels the reviewers' perspectives when processing incoming feedback in rummage mode. Boss is never dispatched as part of the review squad.
 
-All review agents (1-7) dispatch with `model: "opus"` by default. To override, add `agent-model: sonnet` to `my-context.md` — this forces all review agents to Sonnet for teams that want to reduce token spend. Boss always runs at `model: "opus"` regardless of override.
+All review agents (1-7) dispatch with `model: "sonnet"` by default. Personas are narrow and prompts are tight — Sonnet 4.6 holds quality at a fraction of the cost. To force Opus for teams that want maximum scrutiny, add `agent-model: opus` to `my-context.md`. Boss always runs at `model: "opus"` regardless of override. The merge agent (engine.md Step 4) also stays on Opus — synthesis benefits from the stronger model.
 
 ## Dispatch Strategy
 

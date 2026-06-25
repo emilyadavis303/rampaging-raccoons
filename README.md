@@ -52,7 +52,7 @@ Examples:
 
 ## Model usage
 
-All review agents (1-8) run on **Opus** by default. Boss always runs on **Opus** regardless of override. Triage and fingerprinting use **Haiku**. To override review agents, add `agent-model: sonnet` to `my-context.md` — this forces agents 1-8 to Sonnet.
+All review agents (1-7) run on **Sonnet** by default — personas are narrow, prompts are tight, and Sonnet 4.6 holds quality at a fraction of Opus cost. The merge agent and Boss always run on **Opus**. Triage and the confidence filter use **Haiku**. To force review agents to Opus for maximum scrutiny, add `agent-model: opus` to `my-context.md`.
 
 ## Install
 
