@@ -267,33 +267,48 @@ Launch one Agent with `model: "haiku"`. Pass it:
 
 Prompt the Haiku agent:
 
-> For each finding, check whether the claim accurately describes what is in the
-> diff hunk. Apply the false-positive patterns from the language hints. Return a
-> JSON array — one entry per finding, in the same order:
+> For each finding, check whether the claim accurately describes what is in
+> the diff hunk. Apply the false-positive patterns from the language hints.
+> Score each finding on a 0-100 confidence scale and return a JSON array — one
+> entry per finding, in the same order:
 >
 > ```json
-> [{ "n": 1, "confidence": "high | uncertain", "reason": "one word" }]
+> [{ "n": 1, "confidence": 85, "reason": "one short phrase" }]
 > ```
 >
-> - `high`: claim is accurate and not a documented false-positive pattern
-> - `uncertain`: claim is questionable, contradicted by the diff, or matches a
->   false-positive pattern
+> Scoring rubric (use this verbatim):
+>
+> - **0** — Not confident at all. This is a false positive that doesn't stand
+>   up to light scrutiny, or it describes a pre-existing issue not in the diff.
+> - **25** — Somewhat confident. This might be a real issue, but might also be
+>   a false positive. You couldn't verify it's real. If stylistic, not called
+>   out in language hints or repo conventions.
+> - **50** — Moderately confident. You verified this is a real issue, but it
+>   might be a nitpick or rare in practice. Relative to the rest of the PR,
+>   not very important.
+> - **75** — Highly confident. You double-checked the issue and verified it
+>   will likely be hit in practice. The current approach is insufficient. The
+>   issue is important and will directly impact functionality, or it matches a
+>   language-hint or CLAUDE.md rule directly.
+> - **100** — Absolutely certain. Double-checked, confirmed real, will happen
+>   frequently. Evidence directly confirms.
+>
+> Pick the integer (0/25/50/75/100) closest to your honest assessment.
 >
 > Return only the JSON array. No preamble.
 
 After the Haiku agent returns:
 
-- **Drop `uncertain` findings entirely.** Infra review generates too many false
-  positives to present uncertain findings — they add noise without signal.
-  Remove them from the pipeline before Step 4. Do not pass them to the merge
-  agent.
-- Attach `confidence: "high"` to each surviving finding's raw block.
+- **Drop findings scored `<80` entirely.** Below 80 means the model itself
+  wasn't highly confident this is real. False positives add noise without
+  signal. Remove these before Step 4 — do not pass them to the merge agent.
+- Attach `confidence: <score>` to each surviving finding's raw block.
 - Print a one-line summary:
-  > 🔍 Confidence filter: N high confidence, N dropped
+  > 🔍 Confidence filter: N kept (≥80), N dropped (<80)
 
-If the Haiku call fails or returns malformed JSON, skip silently and proceed to
-Step 4 with no confidence annotations — the merge agent's own verify step still
-runs.
+If the Haiku call fails or returns malformed JSON, skip silently and proceed
+to Step 4 with no confidence annotations — the merge agent's own verify step
+still runs.
 
 ## Step 4: Merge
 
@@ -364,7 +379,7 @@ worth chattering about.
 
 1. `path/to/file.rb:42` — Thoughts on renaming this...
    — 🥒 Nit Pickles
-2. ⚠️ `path/to/main.tf:88` — Flagged as uncertain by confidence filter
+2. `path/to/handler.go:88` — What happens when ctx is nil here?
    — 🌪️ Chaos Carol
 
 The good stuff 🗑️✨
@@ -372,9 +387,9 @@ The good stuff 🗑️✨
 - <positive 2>
 ```
 
-Findings flagged ⚠️ by the confidence filter (Step 3.5) are uncertain — the
-Haiku filter doubted the claim. These are still presented (not dropped) so
-you can make the call. Remove them before posting if you don't trust them.
+Low-confidence findings have already been dropped by the Step 3.5 filter
+(scored `<80`). The findings you see survived both the confidence filter
+and the merge agent's verify pass.
 
 Use AskUserQuestion with these options:
 
