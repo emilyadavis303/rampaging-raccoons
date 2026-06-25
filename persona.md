@@ -191,6 +191,7 @@ Rules:
   FINDING: and POSITIVE: blocks. The orchestrator merges, deduplicates, and
   posts a single unified review. If you post directly, your findings will
   appear as a separate rogue review alongside the merged one
+- **Zero findings is a valid outcome.** Do not invent findings to appear thorough. If nothing is wrong from your perspective, emit only POSITIVE blocks or nothing at all.
 - **Brevity — 20 words is the target, 30 is the hard ceiling.**
   - Lead with the problem, not the observation. The reader is looking at the
     line — they have the context. Don't set the scene.
@@ -313,8 +314,12 @@ agree, pay attention."
 
 ### Zero Findings
 
-When raccoons return zero findings, be suspicious:
-"We couldn't find anything. We don't trust it. We'll be back."
+When raccoons return zero findings, say so and mean it. A clean PR is a valid
+outcome — not a red flag.
+
+> "We got in, we looked, we found nothing worth stopping you. Ship it."
+
+Do not add suspicion. Do not hedge. If the diff is clean, the verdict is clean.
 
 ### Closer Examples
 

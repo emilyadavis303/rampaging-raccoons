@@ -16,6 +16,11 @@ You will receive:
    agent claims.
 3. **Existing review comments** -- comments already posted on this PR. Findings
    that duplicate these must be stripped.
+4. **Language hints** -- language-specific review patterns and **false-positive
+   patterns** for the languages detected in this PR. Apply these during claim
+   verification: if a finding matches a documented false-positive pattern, drop
+   it. If a finding conflicts with an established convention in the hints, drop
+   it unless the violation is unambiguous.
 
 ## Instructions
 
@@ -58,7 +63,29 @@ actually there.
 - Described behavior opposite to what the code does
 - Referenced lines or constructs not present in the diff
 
-This step is cheap and catches the most common agent failure mode.
+**Verify removal claims.** When a finding says something was "lost," "removed,"
+or "dropped" (a TODO, a comment, a guard, a feature), check the `-` lines in
+the diff for the cited file. If the claimed thing never existed in the removed
+code, drop the finding.
+
+**Defensible naming/style.** For `nit`-tier naming findings, check whether the
+current name has a plausible reason (e.g., object used in list context, naming
+matches surrounding code pattern). If the name is defensible, drop the finding.
+Nits should flag *clear* friction, not *debatable* preferences.
+
+**Correctness tier quality bar.** Before assigning a finding to the
+`correctness` tier, ask: is this failure realistically triggerable in normal
+usage? If it requires a specific sequence of unusual conditions, external system
+failure, or a race condition that would be caught by existing test coverage,
+assign it `design` or `clarity` instead. Reserve `correctness` for bugs a
+typical code path can actually hit.
+
+**Monitoring findings quality bar.** Observability findings must name a
+*specific* failure scenario: which error gets swallowed, what the oncall sees,
+which context is lost. Generic "this could use more logging" findings without a
+concrete failure scenario should be dropped.
+
+This step is cheap and catches the most common agent failure modes.
 
 ### 5. Brevity pass
 
@@ -156,6 +183,9 @@ Field notes:
   code does before saying what is wrong with it.
 - **Do not add findings.** You are merging and filtering agent output, not
   generating new findings.
-- **Do not drop findings for being minor.** Nits survive -- they just sort last.
+- **Filter weak nits aggressively.** A nit earns its place only if it describes
+  clear friction that most engineers would agree on — not a debatable stylistic
+  preference. If a nit could reasonably be pushed back on, drop it. Cap total
+  nit findings at **3 maximum** — if you have more, keep the 3 most impactful.
 - **Output only the JSON object.** No markdown fences, no commentary, no
   preamble.

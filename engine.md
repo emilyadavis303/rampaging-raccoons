@@ -167,8 +167,27 @@ JSON emission in Step 6.
 
 ## Step 2: Triage
 
-Run a fast Haiku classification on the cleaned diff to determine change type and
-inform agent dispatch. This should take ~3-5 seconds.
+### Infra-dominant pre-check
+
+Before running triage classification, check whether the diff is infra-dominant:
+count the changed lines (`+` and `-`) in `.tf`, `.tfvars`, and `.hcl` files vs.
+total changed lines. If infra files represent **≥80% of changed lines**:
+
+- **Skip triage classification entirely**
+- Set squad to: **The Oracle, Chaos Carol, Inspector Bandit**
+- Print:
+  > 🏗️ Infra-dominant diff — deploying The Oracle, Chaos Carol, and Inspector
+  > Bandit. Triage skipped.
+- Proceed directly to Step 3 Dispatch with this squad
+
+This squad is picked because: The Oracle catches destructive/blast-radius
+issues (its entire "catastrophic blast radius" section applies directly to
+Terraform), Chaos Carol hunts for failure modes and invalid assumptions, and
+Inspector Bandit checks that the change matches the description. The Rails-
+focused raccoons (Nit Pickles, Cranky Hank, Lil' Whiskers, Squinty, Nosy)
+add noise without signal on infra PRs.
+
+If infra files represent <80% of changed lines (mixed PR), run triage normally.
 
 ### Classify
 
@@ -226,21 +245,72 @@ to their focus area. Only summarize as a last resort for truly massive diffs
 (8000+ lines), and when you do, flag in the prompt that the agent is working
 from a summary and should not assume details not explicitly stated.
 
+## Step 3.5: Confidence Filter
+
+Run a lightweight Haiku confidence check on **all findings** before merge. This
+catches hallucinations and false positives across all languages — agents
+occasionally describe code that isn't there, cite the wrong line, or flag
+patterns that are valid in context. The filter is cheap (one batched Haiku call)
+and runs every time, not just on infra PRs.
+
+Collect all raw `FINDING:` blocks from every agent output. For each finding,
+extract: `tag`, `file`, `line`, `body`.
+
+Launch one Agent with `model: "haiku"`. Pass it:
+
+- All findings (as a numbered list: `1. [tag] file:line — body`)
+- The relevant diff hunks for each finding's cited file (not the full diff —
+  just the `@@` hunk(s) that include the cited line, ±10 lines)
+- The language hints loaded in Step 1 (including false-positive patterns)
+
+Prompt the Haiku agent:
+
+> For each finding, check whether the claim accurately describes what is in the
+> diff hunk. Apply the false-positive patterns from the language hints. Return a
+> JSON array — one entry per finding, in the same order:
+>
+> ```json
+> [{ "n": 1, "confidence": "high | uncertain", "reason": "one word" }]
+> ```
+>
+> - `high`: claim is accurate and not a documented false-positive pattern
+> - `uncertain`: claim is questionable, contradicted by the diff, or matches a
+>   false-positive pattern
+>
+> Return only the JSON array. No preamble.
+
+After the Haiku agent returns:
+
+- **Drop `uncertain` findings entirely.** Infra review generates too many false
+  positives to present uncertain findings — they add noise without signal.
+  Remove them from the pipeline before Step 4. Do not pass them to the merge
+  agent.
+- Attach `confidence: "high"` to each surviving finding's raw block.
+- Print a one-line summary:
+  > 🔍 Confidence filter: N high confidence, N dropped
+
+If the Haiku call fails or returns malformed JSON, skip silently and proceed to
+Step 4 with no confidence annotations — the merge agent's own verify step still
+runs.
+
 ## Step 4: Merge
 
 After all agents return:
 
 1. **Collect raw outputs** — gather the full text output from every returned
    agent. Prefix each with a header identifying the agent name and tag
-   (e.g., `=== Agent Name (tag) ===`).
+   (e.g., `=== Agent Name (tag) ===`). Include any confidence annotations
+   attached in Step 3.5.
 
 2. **Dispatch merge agent** — read the prompt from the skill's
    `merge-prompt.md`. Launch a single Agent with `model: "opus"` using that
-   prompt. Pass it three inputs:
+   prompt. Pass it four inputs:
 
-   - All agent outputs (concatenated, with agent name headers from item 1)
+   - All agent outputs (concatenated, with agent name headers from item 1,
+     including confidence annotations from Step 3.5 where present)
    - The cleaned diff (from Step 1)
    - Existing review comments (from Step 1)
+   - Language hints (all language hint files loaded in Step 1, concatenated)
 
    The merge agent returns a JSON object with `findings`, `positives`,
    `verdict`, and `blocking_summary`.
@@ -292,13 +362,17 @@ worth chattering about.
 
 1. `path/to/file.rb:42` — Thoughts on renaming this...
    — 🥒 Nit Pickles
-2. `path/to/handler.go:88` — What happens when ctx is nil here?
+2. ⚠️ `path/to/main.tf:88` — Flagged as uncertain by confidence filter
    — 🌪️ Chaos Carol
 
 The good stuff 🗑️✨
 - <positive 1>
 - <positive 2>
 ```
+
+Findings flagged ⚠️ by the confidence filter (Step 3.5) are uncertain — the
+Haiku filter doubted the claim. These are still presented (not dropped) so
+you can make the call. Remove them before posting if you don't trust them.
 
 Use AskUserQuestion with these options:
 
@@ -320,10 +394,10 @@ the Auto Mode Findings emission schema, with `review_id: null`,
 
 Replace the standard preview with the self-review walkthrough.
 
-#### Phase 1: Summary
+#### Phase 1: Show everything
 
-Print a compact summary instead of the full numbered list. Use the persona's
-Review Summary Voice for tone (positives, opener phrasing).
+Print the full findings list — all findings visible at once, in importance
+order. Use the same format as default mode peer review:
 
 ```
 🪞 Mirror check — PR #<number> (<headRefName>)
@@ -335,50 +409,70 @@ The raccoons found N things. By tier:
 - Nits: <count>
 
 The good stuff 🗑️✨
-- <2-3 positives, same as standard preview>
+- <2-3 positives>
 
-<verdict line — same format as default mode>
+<verdict line>
 
-Walking through findings now. For each one: Fix, Skip, or Defer.
-```
-
-Tier counts come from the merge agent's `tier` field on each finding
-(`correctness | design | clarity | nit`). Sum them per tier.
-
-#### Phase 2: Walk through findings
-
-For each finding (in importance order, same sort as default mode):
-
-**First, output the full finding as text** — the engineer must be able to read the finding before being asked to act on it. Do not call AskUserQuestion until the finding is fully displayed:
-
-```
-─── Finding <i> of <N> ─────────────────────────────────
-📍 <file>:<line>
-<tags joined with " · ">
+─── 1 ──────────────────────────────────────────────────
+📍 <file>:<line>  <tags joined with " · ">
 
 <finding body>
 
 Suggested fix:
-<suggestion code, indented two spaces; omit this section if no suggestion>
+<suggestion code, indented two spaces; omit if no suggestion>
+
+─── 2 ──────────────────────────────────────────────────
+📍 <file>:<line>  <tags joined with " · ">
+
+<finding body>
+...
 ```
 
-**Then, after the finding text is visible**, use AskUserQuestion with three options:
+Print ALL findings before asking anything. The engineer reads the full list
+first.
 
-- **Fix** — open the file at the cited line, present the relevant code in the terminal, and walk through the change with the engineer. Conversational edit:
+#### Phase 2: Pick what to act on
+
+After printing all findings, use AskUserQuestion:
+
+> Want to act on any of these?
+
+- **All** — walk through every finding
+- **Pick individually** — quick triage pass: show each finding as a one-liner
+  (`N. file:line — <body truncated to 10 words>`) and ask `Include / Skip`
+  for each. After the pass, confirm which are selected, then start the
+  walkthrough.
+- **None** — skip walkthrough, jump straight to Phase 4 end prompts
+
+#### Phase 3: Walk through selected findings
+
+For each selected finding:
+
+**Print the finding again** (same format as Phase 1) so the engineer doesn't
+have to scroll. Then use AskUserQuestion with these options:
+
+- **Fix** — open the file at the cited line, present the relevant code in the
+  terminal, and walk through the change conversationally:
   - Show the cited code with 5 lines of context above and below
   - Restate the suggestion (or describe the change if no suggestion)
   - Ask the engineer to confirm, propose an alternative, or skip
   - Apply the agreed-upon edit using the Edit tool
   - Confirm the edit and move to the next finding
-- **Explain** — dig into the finding before deciding. Read the file at the cited line with 15-20 lines above and below (15-20 lines above and below), explain what the raccoon(s) flagged and why it matters, show the relevant code path, and surface any additional context from the diff or repo that helps the engineer evaluate. After explaining, re-present the same four options (Fix / Explain / Skip / Defer) so the engineer can decide with full understanding. The engineer may also type freeform questions via "Other" to continue the conversation — keep discussing until they pick an action.
+- **Explain** — read the file at the cited line with 15-20 lines above and
+  below, explain what the raccoon(s) flagged and why it matters, surface any
+  additional context from the diff or repo. After explaining, re-present the
+  same options so the engineer can decide. The engineer may also type freeform
+  questions via "Other" — keep discussing until they pick an action.
 - **Skip** — record `mirror_disposition: "skipped"` for this finding, move on
 - **Defer** — record `mirror_disposition: "deferred"` for this finding, move on
 
-The engineer can also use **Other** to type freeform questions or comments about the finding — respond conversationally, then re-present the options.
+The engineer can also use **Other** to type freeform questions — respond
+conversationally, then re-present the options.
 
-After each finding, increment the counter and present the next one. Track session state (fixed, skipped, deferred counts and which findings are in each bucket).
+Track session state (fixed, skipped, deferred counts and which findings are in
+each bucket).
 
-#### Phase 3: End-of-walkthrough prompts
+#### Phase 4: End-of-walkthrough prompts
 
 After walking all findings, print the summary:
 
@@ -428,7 +522,7 @@ confirmation.
 
 If fixed = 0, skip Prompt 2 entirely.
 
-#### Phase 4: Emit findings JSON
+#### Phase 5: Emit findings JSON
 
 Always emit the findings JSON (per the existing Auto Mode emission rules)
 with the mirror-check fields populated. See Auto Mode section for schema
