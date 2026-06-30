@@ -204,7 +204,7 @@ This squad is picked because: The Oracle catches destructive/blast-radius
 issues (its entire "catastrophic blast radius" section applies directly to
 Terraform), Chaos Carol hunts for failure modes and invalid assumptions, and
 Inspector Bandit checks that the change matches the description. The Rails-
-focused raccoons (Nit Pickles, Cranky Hank, Squinty, Nosy)
+focused raccoons (Nit Pickles, Cranky Hank, Squinty, Gumshoe)
 add noise without signal on infra PRs.
 
 If infra files represent <80% of changed lines (mixed PR), run triage normally.

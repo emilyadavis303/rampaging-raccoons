@@ -24,8 +24,11 @@ to who will produce useful findings — not every raccoon every time.
   damage).
 - **`inspector-bandit`** — PR description vs. diff alignment. Scope creep,
   stray files, half-finished work, missing pieces the description promises.
-- **`nosy`** — Observability. The 3am page test. Missing logs/metrics/traces
-  on new code paths, swallowed errors, missing correlation IDs, PII in logs.
+- **`gumshoe`** — Observability, both directions. Can you debug it from the
+  evidence the code leaves behind — *and* does that evidence cost too much?
+  Missing logs/metrics/traces on new code paths, swallowed errors, missing
+  correlation IDs, PII in logs; plus hot-path log volume and high-cardinality
+  tags (`user_id`, `email`, request IDs) that inflate the Datadog bill.
 - **`squinty`** — Test quality. Does this test prove what it claims? Over-
   mocking, weak assertions, tests that pass for the wrong reason, missing
   branches.
@@ -51,13 +54,14 @@ dispatching misses real concerns.
 Default heuristics — adjust based on what's actually in the diff:
 
 - **New code (additive):** typically `chaos-carol` + `the-oracle` +
-  `inspector-bandit`. Add `nosy` if the new code is a network call, job, or
-  error-prone path. Add `squinty` if tests are part of the change. Add
+  `inspector-bandit`. Add `gumshoe` if the new code is a network call, job, or
+  error-prone path, or if it adds logging/metrics. Add `squinty` if tests are
+  part of the change. Add
   `cranky-hank` if the additive change introduces new abstractions or
   patterns. Skip `nit-pickles` unless the diff is long enough to gather
   meaningful naming/style signal.
 - **Behavior change (mutative):** typically `chaos-carol` + `the-oracle` +
-  `cranky-hank`. Add `nosy` if error handling or observability is touched.
+  `cranky-hank`. Add `gumshoe` if error handling or observability is touched.
   Add `squinty` if tests are touched. Add `inspector-bandit` if the diff
   scope seems wider than the description. Skip `nit-pickles` unless there's
   clear naming/clarity drift.
@@ -73,8 +77,9 @@ Default heuristics — adjust based on what's actually in the diff:
 - **Security-sensitive paths (auth, crypto, payments, PII handling):**
   always include `chaos-carol`. Add `the-oracle` for blast-radius if the
   change is mutative.
-- **Observability changes (logging, metrics, tracing):** `nosy` leads, plus
-  whoever else fits.
+- **Observability changes (logging, metrics, tracing):** `gumshoe` leads, plus
+  whoever else fits. Gumshoe also owns Datadog cost — new log lines in hot
+  paths or high-cardinality metric tags are squarely its beat.
 
 Treat these as heuristics, not rules. If the diff calls for a different mix,
 pick what the diff actually needs.
@@ -99,7 +104,8 @@ One sentence. Name the dominant signal you saw in the diff and how it shaped
 the squad. Examples:
 
 - "Mutative auth middleware change with new error paths — Carol for failure
-  modes, Nosy for the 3am page, Oracle for blast radius across callers."
+  modes, Gumshoe for the debugging evidence, Oracle for blast radius across
+  callers."
 - "Pure rename across 4 files — Bandit checks scope, Carol checks for
   accidental behavior change."
 - "New service object + spec — Carol for correctness, Squinty for the spec,

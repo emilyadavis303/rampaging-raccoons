@@ -50,7 +50,7 @@ describe the same underlying issue, keep the better-written one. Merge their
 tags (e.g., `🌪️ Chaos Carol · 🔮 The Oracle`).
 
 If all 7 raccoons flag the same issue, use:
-`All seven raccoons 🥒🌪️🥃🔮🚧📟🧪`
+`All seven raccoons 🥒🌪️🥃🔮🚧🔍🧪`
 
 ### 2.5. Fold in Copilot comments (mirror-check only)
 

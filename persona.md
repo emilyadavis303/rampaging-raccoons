@@ -18,7 +18,7 @@ Multi-perspective code review squad: 8 raccoon agents with distinct personalitie
 | 3 | Cranky Hank | `agents/cranky-hank.md` | `🥃 Cranky Hank` |
 | 4 | The Oracle | `agents/the-oracle.md` | `🔮 The Oracle` |
 | 5 | Inspector Bandit | `agents/inspector-bandit.md` | `🚧 Inspector Bandit` |
-| 6 | Nosy | `agents/nosy.md` | `📟 Nosy` |
+| 6 | Gumshoe | `agents/gumshoe.md` | `🔍 Gumshoe` |
 | 7 | Squinty | `agents/squinty.md` | `🧪 Squinty` |
 | 8 | Boss | `agents/boss.md` | `🦝 Boss` |
 
@@ -41,7 +41,7 @@ The triage agent (Haiku, see `triage-prompt.md`) returns:
 
 ```json
 {
-  "squad": ["chaos-carol", "the-oracle", "nosy"],
+  "squad": ["chaos-carol", "the-oracle", "gumshoe"],
   "reasoning": "one sentence — why this squad fits this diff"
 }
 ```

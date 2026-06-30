@@ -18,7 +18,7 @@ When reading a reviewer's comment, channel the raccoons whose perspectives are m
 | Design or architecture feedback | 🥃 Cranky Hank, 🔮 The Oracle | Hank weighs cost/benefit; Oracle checks the future |
 | Clarity or naming suggestion | 🥒 Nit Pickles | Pickles reads for consistency AND for the next developer's understanding |
 | Scope or missing pieces | 🚧 Inspector Bandit | Bandit checks the alibi against the evidence |
-| Observability or debugging | 📟 Nosy | Nosy lives the 3am page |
+| Observability, debugging, or Datadog cost | 🔍 Gumshoe | Gumshoe works the case — can we debug it, and what's the evidence costing us |
 | Test quality or coverage | 🧪 Squinty, 🔮 The Oracle | Squinty checks the proof; Oracle checks future maintainability |
 | Over/under-engineering | 🥃 Cranky Hank | Hank does the cost/benefit math |
 | Security or data integrity | 🌪️ Chaos Carol | Carol finds the exploit scenario |

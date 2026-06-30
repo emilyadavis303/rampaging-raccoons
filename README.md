@@ -11,13 +11,13 @@ Multi-perspective PR review skill for [Claude Code](https://claude.com/claude-co
 | 🥃 **Cranky Hank**<br>*"Sure, fine — but at what cost?"* | Cost/benefit — over/under-engineering, pattern violations, dependency coupling, realistic-scale performance |
 | 🔮 **The Oracle**<br>*"I've seen how this ends."* | Agentic-first maintainability — PR/commit context, durable repo knowledge, potentially catastrophic foot-guns |
 | 🚧 **Inspector Bandit**<br>*"Something doesn't add up here."* | PR description vs diff alignment, scope, missing pieces |
-| 📟 **Nosy**<br>*"Okay, it's 3am, the alert fires. What do I see?"* | Observability — the 3am test, logs, traces, error context, alerts |
+| 🔍 **Gumshoe**<br>*"What evidence did we actually collect — and what's it costing us?"* | Observability both directions — logs, traces, error context to debug it; plus Datadog cost (log volume, metric cardinality) |
 | 🧪 **Squinty**<br>*"So much green, so little confidence."* | Tests-as-code — does this test prove what it claims? |
 | 🦝 **Boss**<br>*"I've heard all seven of them. Here's what matters."* | Rummage mode only — channels the squad's perspectives on incoming reviewer feedback without dispatching them |
 
 ## Smart dispatch
 
-A fast Haiku triage pass reads the diff and picks which raccoons should review it — floor of 2, ceiling of all 7. No fixed change-type table; the dispatcher matches what's actually in the diff to who will produce useful findings. A mutative auth change pulls in Carol/Oracle/Nosy; a pure rename pulls in just Carol/Bandit; a test-only PR pulls in Squinty/Oracle. Override with `--full-rampage` to deploy everyone regardless.
+A fast Haiku triage pass reads the diff and picks which raccoons should review it — floor of 2, ceiling of all 7. No fixed change-type table; the dispatcher matches what's actually in the diff to who will produce useful findings. A mutative auth change pulls in Carol/Oracle/Gumshoe; a pure rename pulls in just Carol/Bandit; a test-only PR pulls in Squinty/Oracle. Override with `--full-rampage` to deploy everyone regardless.
 
 A blast-radius scan runs separately whenever modified signatures are detected in the diff — independent of dispatch.
 
