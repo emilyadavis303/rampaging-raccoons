@@ -6,6 +6,11 @@ squad, it fetches incoming reviewer comments, dispatches Boss to channel
 the appropriate raccoon perspectives per comment, and walks the engineer
 through each one (fix / respond / explain / skip).
 
+Reviewer comments include **GitHub Copilot**'s automated review. Copilot is
+treated as a (lower-trust) reviewer, not filtered out as a bot — its comments
+ride the same walkthrough as human feedback, tagged so the engineer knows the
+source. Other bots (CI, linters, automated checks) are still excluded.
+
 Engine.md's Branches table points here. When `--rummage` is detected, read
 this file instead of running engine.md Steps 1-6.
 
@@ -53,6 +58,7 @@ Parse the fetched comments into a structured inventory. For each comment, extrac
 
 - `id` — GitHub comment ID
 - `type` — `inline_review`, `review_body`, or `discussion`
+- `source` — `human` or `copilot` (set `copilot` when the author login contains `copilot`, e.g. `copilot-pull-request-reviewer[bot]`)
 - `author` — who left it
 - `body` — full comment text
 - `path` — file path (inline only, null for others)
@@ -64,18 +70,18 @@ Parse the fetched comments into a structured inventory. For each comment, extrac
 **Filter to actionable comments:**
 
 - Exclude comments authored by the PR author (you don't need to respond to your own comments)
-- Exclude bot comments (CI bots, linters, automated checks)
+- Exclude bot comments (CI bots, linters, automated checks) — **but keep Copilot** (`source: copilot`); it's a reviewer, not noise
 - Exclude comments that are already resolved
 - Exclude comments where the PR author has already replied substantively (not just "done" or "fixed")
 - Group thread replies with their parent — present the full thread as one unit
 
 **Categorize remaining comments:**
 
-- **Blocking** — `CHANGES_REQUESTED` reviews, comments containing "must", "required", "blocking", or "needs to"
+- **Blocking** — `CHANGES_REQUESTED` reviews, comments containing "must", "required", "blocking", or "needs to". **Copilot is never blocking** — a bot doesn't gate the PR; cap Copilot comments at `actionable` regardless of keywords.
 - **Actionable** — suggestions, questions, code review comments with substance
 - **Informational** — approvals, FYI comments, positive feedback
 
-**Sort order:** Blocking first, then actionable, then informational. Within each category, inline comments before review-level before discussion.
+**Sort order:** Blocking first, then actionable, then informational. Within each category, human comments before Copilot, and inline before review-level before discussion.
 
 Print the inventory summary:
 
@@ -84,6 +90,7 @@ Print the inventory summary:
    Blocking: <count>
    Actionable: <count>
    Informational: <count>
+   From Copilot: <count>
    (Skipped: <count> already addressed)
 ```
 
@@ -107,6 +114,9 @@ For each comment in the sorted inventory, run this loop:
 
 <thread context if replies exist>
 ```
+
+Use `🤖 Copilot` instead of `💬 <author>` for `source: copilot` comments so the
+engineer reads the trust level at a glance.
 
 **Step B: Dispatch Boss** — launch one Agent with `model: "opus"` using the Boss Prompt Template from `persona.md`. Pass it:
 
@@ -192,6 +202,8 @@ Same as mirror-check's Prompt 2:
 
 Replies posted by rummage mode should sound like the engineer, not like a raccoon. No emoji tags, no raccoon personality in the posted reply. The raccoons advise privately — the public response is professional.
 
+**Replying to Copilot:** keep it terse — a bot doesn't need a conversational reply. `"Fixed."` is enough; resolve the thread. Skip discussion-style replies (Discuss doesn't make sense against Copilot — pick Decline or Fix).
+
 Keep replies concise:
 
 - **Fix:** "Good catch — fixed in <sha or 'latest push'>." or "Fixed, thanks." If the fix was non-obvious, briefly explain what changed.
@@ -216,6 +228,7 @@ After the walkthrough, write a rummage-specific JSON to `/tmp/raccoons-rummage-<
     {
       "github_comment_id": 123456,
       "type": "inline_review",
+      "source": "human",
       "author": "reviewer-name",
       "path": "app/services/foo.rb",
       "line": 42,

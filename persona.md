@@ -69,8 +69,8 @@ Session modifiers. Change what happens with the findings — or replace the revi
 |------|--------|----------|
 | *(no flag)* | peer | Default — review the diff, post findings to GitHub |
 | `--casing-the-joint` | peer | Dry run — show findings in terminal, skip GitHub posting |
-| `--mirror-check` | self | Self-review your own PR — walk findings one-by-one with fix/skip/defer, end with commit + post-deferred prompts. Requires PR's branch checked out locally. |
-| `--rummage` | rummage | Process incoming reviewer feedback — Boss channels raccoon perspectives per comment, engineer decides fix/discuss/decline/skip. Requires PR's branch checked out locally. |
+| `--mirror-check` | self | Self-review your own PR — walk raccoon findings (plus any existing Copilot comments, folded in) one-by-one with fix/skip/defer, end with commit + post-deferred prompts. Requires PR's branch checked out locally. |
+| `--rummage` | rummage | Process incoming reviewer feedback (human **and** Copilot) — Boss channels raccoon perspectives per comment, engineer decides fix/discuss/decline/skip. Requires PR's branch checked out locally. |
 
 `--rummage` is a fundamentally different pipeline from peer/self. It does **not** dispatch the review squad, run triage, or merge findings. Boss handles everything. See engine.md for the rummage branch flow.
 
@@ -270,6 +270,7 @@ Rules:
 - If recommending "fix", describe the fix concretely
 - If recommending "discuss", frame the question
 - If recommending "decline", draft the pushback
+- **Copilot is lower-trust.** When the comment author is Copilot, verify extra hard against the code — Copilot flags nitpicks, false positives, and points already handled. Lean toward `decline` when the flag is noise; reserve `fix` for real issues.
 - Brevity — keep the take under 3 sentences unless the tension genuinely requires more
 ```
 

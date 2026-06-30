@@ -51,6 +51,26 @@ gh api repos/{owner}/{repo}/pulls/$ARGUMENTS/comments --jq '.[] | "\(.path):\(.l
 gh pr view $ARGUMENTS --json reviews --jq '.reviews[] | "\(.author.login) (\(.state)): \(.body[0:200])"'
 ```
 
+**4b. Copilot comments — full bodies (mirror-check only)**
+
+When `--mirror-check` is set, fetch Copilot's inline review comments in full
+(the truncated item-3 fetch can't drive a fix walkthrough):
+
+```bash
+gh api repos/{owner}/{repo}/pulls/$ARGUMENTS/comments --paginate
+```
+
+Keep only comments whose author login contains `copilot` (e.g.
+`copilot-pull-request-reviewer[bot]`). For each, capture `id`, `path`,
+`line` (fall back to `original_line`), `body`, and any ` ```suggestion ` block.
+Drop ones already resolved. Route these to the merge agent's **input 5** (Step
+4) — and **exclude them from input 3** (existing review comments). If left in
+input 3 they'd strip the overlapping raccoon finding instead of merging with
+it, which is the opposite of the fold-in.
+
+In peer/default and `--casing-the-joint` modes, skip this fetch — Copilot stays
+in the existing-comments strip path, unchanged.
+
 **Verify "addressed" claims:** Don't trust reply comments that say "Addressed
 in \<sha\>" — the fix may be incomplete or reverted. For any comment marked as
 addressed, fetch the actual file from the PR branch to confirm:
@@ -321,16 +341,20 @@ After all agents return:
 
 2. **Dispatch merge agent** — read the prompt from the skill's
    `merge-prompt.md`. Launch a single Agent with `model: "opus"` using that
-   prompt. Pass it four inputs:
+   prompt. Pass it these inputs:
 
    - All agent outputs (concatenated, with agent name headers from item 1,
      including confidence annotations from Step 3.5 where present)
    - The cleaned diff (from Step 1)
-   - Existing review comments (from Step 1)
+   - Existing review comments (from Step 1) — **in `--mirror-check`, with
+     Copilot comments removed** (they go to input 5 instead, per Batch A 4b)
    - Language hints (all language hint files loaded in Step 1, concatenated)
+   - **(mirror-check only) Copilot comments to fold in** (input 5) — the full
+     Copilot comments from Batch A 4b. Omit this input in all other modes.
 
    The merge agent returns a JSON object with `findings`, `positives`,
-   `verdict`, and `blocking_summary`.
+   `verdict`, and `blocking_summary`. Findings folded from or matched to a
+   Copilot comment carry a `🤖 Copilot` tag and a non-empty `source_comment_ids`.
 
 3. **Parse the returned JSON** — if the merge agent returns malformed JSON
    (fails `JSON.parse` or equivalent), retry the merge agent once with the same
@@ -405,6 +429,7 @@ The raccoons found N things. By tier:
 - Design: <count>
 - Clarity: <count>
 - Nits: <count>
+(<count> folded in from Copilot)   ← omit this line if no Copilot comments
 
 The good stuff 🗑️✨
 - <2-3 positives>
@@ -467,6 +492,17 @@ have to scroll. Then use AskUserQuestion with these options:
 The engineer can also use **Other** to type freeform questions — respond
 conversationally, then re-present the options.
 
+**Copilot-backed findings** (`source_comment_ids` non-empty) are backed by a
+real comment thread on the PR, so the actions behave a little differently:
+
+- **Fix** — after applying the edit, offer to reply `"Fixed."` and resolve each
+  thread in `source_comment_ids` (same reply/resolve mechanic as rummage). For a
+  merged finding (raccoon + Copilot), the raccoon's fix resolves the Copilot
+  thread too.
+- **Defer** — do **not** post a new inline comment in Phase 4; the comment
+  already lives on the PR. Leave the thread as-is.
+- **Skip** — leave the thread untouched.
+
 Track session state (fixed, skipped, deferred counts and which findings are in
 each bucket).
 
@@ -502,6 +538,9 @@ Use AskUserQuestion:
 If "Post": run Step 6's posting logic on the deferred findings only, with the
 review body summarizing only the deferred items (e.g., "🪞 Mirror check found
 N things worth deferring."). Other findings (fixed, skipped) are not posted.
+**Exclude Copilot-backed deferred findings** (`source_comment_ids` non-empty)
+from the post set — their comment already exists on the PR; re-posting would
+duplicate it. Leave those threads as-is.
 
 If "Skip": don't post anything. Continue to Prompt 2.
 
@@ -706,7 +745,8 @@ After the review posts, write the parsed structured findings to
       "suggestion": "next unless client",
       "mirror_disposition": "fixed",
       "posted_inline": false,
-      "comment_id": null
+      "comment_id": null,
+      "source_comment_ids": []
     }
   ]
 }
@@ -731,6 +771,9 @@ After the review posts, write the parsed structured findings to
   summarizes the walkthrough outcomes. `deferred_posted` is true if Prompt 1
   was answered "Post". `fixes_committed` reflects Prompt 2's answer
   (`"committed"`, `"staged"`, or `"none"`); `"none"` if fixed_count was 0.
+- `source_comment_ids` is the list of GitHub Copilot comment IDs folded into a
+  finding (mirror-check only), or `[]` for pure raccoon findings. On a fixed
+  Copilot-backed finding, the thread reply/resolve happened in Phase 3.
 - `mirror_disposition` is `null` for non-mirror-check sessions or for
   findings not yet processed. In a mirror-check session, every finding gets
   exactly one of `"fixed"`, `"skipped"`, or `"deferred"`. For deferred

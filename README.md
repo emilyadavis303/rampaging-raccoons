@@ -36,8 +36,8 @@ Session modifiers. Change what happens with the findings — or replace the revi
 | Flag | Behavior |
 |------|----------|
 | `--casing-the-joint` | Dry run — findings shown in terminal, nothing posted to GitHub |
-| `--mirror-check` | Self-review your own PR — walks findings interactively (fix / skip / defer each), ends with commit + post-deferred prompts. Requires PR's branch checked out locally. |
-| `--rummage` | Process incoming reviewer feedback — Boss channels raccoon perspectives per comment, you decide fix / respond / explain / skip. Replies posted in your voice, not raccoon voice. Requires PR's branch checked out locally. |
+| `--mirror-check` | Self-review your own PR — walks findings interactively (fix / skip / defer each), ends with commit + post-deferred prompts. Existing Copilot comments are folded into the same walkthrough (merged with overlapping raccoon findings). Requires PR's branch checked out locally. |
+| `--rummage` | Process incoming reviewer feedback (human **and** Copilot) — Boss channels raccoon perspectives per comment, you decide fix / respond / explain / skip. Replies posted in your voice, not raccoon voice. Requires PR's branch checked out locally. |
 
 Examples:
 
