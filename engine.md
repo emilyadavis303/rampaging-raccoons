@@ -14,7 +14,7 @@ The engine supports three branches. The branch is determined by the rampage type
 
 **Peer** and **self** share the same pipeline through Step 4 — they differ only in how findings are presented (Step 5) and posted (Step 6). **Rummage** is a fundamentally different pipeline: it fetches reviewer comments instead of dispatching the review squad, uses Boss to channel perspectives per comment, and skips triage and merge entirely.
 
-When `--rummage` is detected in the invocation context, jump directly to the **Rummage Branch** section below. Do not run the peer/self pipeline.
+When `--rummage` is detected in the invocation context, **read `rummage.md` instead of running the peer/self pipeline.** The Rummage Branch pointer near the bottom of this file confirms that handoff.
 
 ## Step 1: Gather
 
@@ -50,6 +50,26 @@ gh api repos/{owner}/{repo}/pulls/$ARGUMENTS/comments --jq '.[] | "\(.path):\(.l
 ```bash
 gh pr view $ARGUMENTS --json reviews --jq '.reviews[] | "\(.author.login) (\(.state)): \(.body[0:200])"'
 ```
+
+**4b. Copilot comments — full bodies (mirror-check only)**
+
+When `--mirror-check` is set, fetch Copilot's inline review comments in full
+(the truncated item-3 fetch can't drive a fix walkthrough):
+
+```bash
+gh api repos/{owner}/{repo}/pulls/$ARGUMENTS/comments --paginate
+```
+
+Keep only comments whose author login contains `copilot` (e.g.
+`copilot-pull-request-reviewer[bot]`). For each, capture `id`, `path`,
+`line` (fall back to `original_line`), `body`, and any ` ```suggestion ` block.
+Drop ones already resolved. Route these to the merge agent's **input 5** (Step
+4) — and **exclude them from input 3** (existing review comments). If left in
+input 3 they'd strip the overlapping raccoon finding instead of merging with
+it, which is the opposite of the fold-in.
+
+In peer/default and `--casing-the-joint` modes, skip this fetch — Copilot stays
+in the existing-comments strip path, unchanged.
 
 **Verify "addressed" claims:** Don't trust reply comments that say "Addressed
 in \<sha\>" — the fix may be incomplete or reverted. For any comment marked as
@@ -167,52 +187,73 @@ JSON emission in Step 6.
 
 ## Step 2: Triage
 
-Run a fast Haiku classification on the cleaned diff to determine change type and
-inform agent dispatch. This should take ~3-5 seconds.
+### Infra-dominant pre-check
+
+Before running triage classification, check whether the diff is infra-dominant:
+count the changed lines (`+` and `-`) in `.tf`, `.tfvars`, and `.hcl` files vs.
+total changed lines. If infra files represent **≥80% of changed lines**:
+
+- **Skip triage classification entirely**
+- Set squad to: **The Oracle, Chaos Carol, Inspector Bandit**
+- Print:
+  > 🏗️ Infra-dominant diff — deploying The Oracle, Chaos Carol, and Inspector
+  > Bandit. Triage skipped.
+- Proceed directly to Step 3 Dispatch with this squad
+
+This squad is picked because: The Oracle catches destructive/blast-radius
+issues (its entire "catastrophic blast radius" section applies directly to
+Terraform), Chaos Carol hunts for failure modes and invalid assumptions, and
+Inspector Bandit checks that the change matches the description. The Rails-
+focused raccoons (Nit Pickles, Cranky Hank, Squinty, Gumshoe)
+add noise without signal on infra PRs.
+
+If infra files represent <80% of changed lines (mixed PR), run triage normally.
 
 ### Classify
 
 Launch an Agent with `model: "haiku"` using the prompt from the skill's
 `triage-prompt.md`, passing in the PR title, description, and cleaned diff. The
-agent returns a JSON object:
+triage prompt contains the roster + each raccoon's focus, so the Haiku agent
+picks the squad directly. The agent returns a JSON object:
 
 ```json
 {
-  "change_type": "mechanical | additive | mutative",
+  "squad": ["chaos-carol", "the-oracle", "inspector-bandit"],
   "modified_identifiers": ["ClassName#method_name"],
   "reasoning": "one sentence"
 }
 ```
 
-Print the result. The engine does not interpret the triage categories — it
-passes the `change_type` to Step 3, where the persona's dispatch table maps it
-to the appropriate squad.
+Validate the returned slugs against the roster in `persona.md`. If any slug is
+unknown, drop it and continue with the rest. If `squad` is empty after
+validation, fall back to dispatching all 7 reviewers (better noisy than blind).
+
+Print the result:
+
+> 🦝 Deploying **N raccoons** (<names>). <reasoning>
 
 ## Step 3: Dispatch
 
-Dispatch agents based on the triage result from Step 2 — unless a dispatch
-override flag is present. Each agent runs as a background Agent call with
-`run_in_background: true`.
+Dispatch agents based on the triage result from Step 2 — unless `--full-rampage`
+is set. Each agent runs as a background Agent call with `run_in_background: true`.
 
-Read the Agent Roster and Dispatch Strategy from `persona.md` to determine
-which agents to launch and how to select them.
+Read the Agent Roster and Dispatch Strategy from `persona.md`.
 
 ### Dispatch logic
 
 1. **Read the persona's roster and dispatch strategy** from `persona.md`.
-2. **If a rampage level flag is in the invocation context**, use the persona's
-   flag parsing rules to determine the squad directly — **skip Step 2
-   (Triage)** entirely. If multiple flags are present, dispatch the **union**
-   of their squads (deduplicated). Print the override announcement using the
-   persona's voice.
-3. **Otherwise, map the triage result** through the persona's tiered dispatch
-   table to select which agents to dispatch.
+2. **If `--full-rampage` is in the invocation context**, **skip Step 2
+   (Triage)** entirely and dispatch all 7 reviewers. Print:
+   > 🦝 **Full rampage** — deploying all 7 raccoons.
+3. **Otherwise, use the `squad` list from triage** to select which agents to
+   dispatch.
 4. **Construct each agent's prompt** using the persona's Agent Prompt Template
    from `persona.md`. Read each dispatched agent's file from the skill's
    `agents/` directory.
 5. **Launch all selected agents** as background Agent calls with the model
-   specified by the persona (default `model: "opus"`, overridable via
-   `agent-model` in `my-context.md`). Wait for all to complete.
+   specified by the persona (default `model: "sonnet"`, overridable to
+   `opus` via `agent-model: opus` in `my-context.md`). Wait for all to
+   complete.
 
 ### Diff content rules
 
@@ -226,53 +267,104 @@ to their focus area. Only summarize as a last resort for truly massive diffs
 (8000+ lines), and when you do, flag in the prompt that the agent is working
 from a summary and should not assume details not explicitly stated.
 
+## Step 3.5: Confidence Filter
+
+Run a lightweight Haiku confidence check on **all findings** before merge. This
+catches hallucinations and false positives across all languages — agents
+occasionally describe code that isn't there, cite the wrong line, or flag
+patterns that are valid in context. The filter is cheap (one batched Haiku call)
+and runs every time, not just on infra PRs.
+
+Collect all raw `FINDING:` blocks from every agent output. For each finding,
+extract: `tag`, `file`, `line`, `body`.
+
+Launch one Agent with `model: "haiku"`. Pass it:
+
+- All findings (as a numbered list: `1. [tag] file:line — body`)
+- The relevant diff hunks for each finding's cited file (not the full diff —
+  just the `@@` hunk(s) that include the cited line, ±10 lines)
+- The language hints loaded in Step 1 (including false-positive patterns)
+
+Prompt the Haiku agent:
+
+> For each finding, check whether the claim accurately describes what is in
+> the diff hunk. Apply the false-positive patterns from the language hints.
+> Score each finding on a 0-100 confidence scale and return a JSON array — one
+> entry per finding, in the same order:
+>
+> ```json
+> [{ "n": 1, "confidence": 85, "reason": "one short phrase" }]
+> ```
+>
+> Scoring rubric (use this verbatim):
+>
+> - **0** — Not confident at all. This is a false positive that doesn't stand
+>   up to light scrutiny, or it describes a pre-existing issue not in the diff.
+> - **25** — Somewhat confident. This might be a real issue, but might also be
+>   a false positive. You couldn't verify it's real. If stylistic, not called
+>   out in language hints or repo conventions.
+> - **50** — Moderately confident. You verified this is a real issue, but it
+>   might be a nitpick or rare in practice. Relative to the rest of the PR,
+>   not very important.
+> - **75** — Highly confident. You double-checked the issue and verified it
+>   will likely be hit in practice. The current approach is insufficient. The
+>   issue is important and will directly impact functionality, or it matches a
+>   language-hint or CLAUDE.md rule directly.
+> - **100** — Absolutely certain. Double-checked, confirmed real, will happen
+>   frequently. Evidence directly confirms.
+>
+> Pick the integer (0/25/50/75/100) closest to your honest assessment.
+>
+> Return only the JSON array. No preamble.
+
+After the Haiku agent returns:
+
+- **Drop findings scored `<80` entirely.** Below 80 means the model itself
+  wasn't highly confident this is real. False positives add noise without
+  signal. Remove these before Step 4 — do not pass them to the merge agent.
+- Attach `confidence: <score>` to each surviving finding's raw block.
+- Print a one-line summary:
+  > 🔍 Confidence filter: N kept (≥80), N dropped (<80)
+
+If the Haiku call fails or returns malformed JSON, skip silently and proceed
+to Step 4 with no confidence annotations — the merge agent's own verify step
+still runs.
+
 ## Step 4: Merge
 
 After all agents return:
 
 1. **Collect raw outputs** — gather the full text output from every returned
    agent. Prefix each with a header identifying the agent name and tag
-   (e.g., `=== Agent Name (tag) ===`).
+   (e.g., `=== Agent Name (tag) ===`). Include any confidence annotations
+   attached in Step 3.5.
 
 2. **Dispatch merge agent** — read the prompt from the skill's
    `merge-prompt.md`. Launch a single Agent with `model: "opus"` using that
-   prompt. Pass it three inputs:
+   prompt. Pass it these inputs:
 
-   - All agent outputs (concatenated, with agent name headers from item 1)
+   - All agent outputs (concatenated, with agent name headers from item 1,
+     including confidence annotations from Step 3.5 where present)
    - The cleaned diff (from Step 1)
-   - Existing review comments (from Step 1)
+   - Existing review comments (from Step 1) — **in `--mirror-check`, with
+     Copilot comments removed** (they go to input 5 instead, per Batch A 4b)
+   - Language hints (all language hint files loaded in Step 1, concatenated)
+   - **(mirror-check only) Copilot comments to fold in** (input 5) — the full
+     Copilot comments from Batch A 4b. Omit this input in all other modes.
 
    The merge agent returns a JSON object with `findings`, `positives`,
-   `verdict`, and `blocking_summary`.
+   `verdict`, and `blocking_summary`. Findings folded from or matched to a
+   Copilot comment carry a `🤖 Copilot` tag and a non-empty `source_comment_ids`.
 
 3. **Parse the returned JSON** — if the merge agent returns malformed JSON
    (fails `JSON.parse` or equivalent), retry the merge agent once with the same
    inputs. If the second attempt also fails, fall back to presenting raw agent
-   outputs to the user in Step 5 (skip fingerprinting).
+   outputs to the user in Step 5.
 
-4. **Fingerprint** — for each finding in the merge agent's JSON, generate a
-   normalized issue token set used for correlating findings across re-reviews.
-   This step stays in the orchestrator, not in the merge agent.
-
-   Launch one Agent with `model: "haiku"` and pass it all finding bodies in a
-   single batched prompt. Ask it to return a JSON array, one entry per finding,
-   each with 4-8 kebab-case tokens describing the *kind* of issue (not the
-   specific identifier names). Examples:
-
-   - `["nil-template-identifier", "no-validation", "silent-passthrough"]`
-   - `["compact-vs-compact-blank", "behavior-change", "filter-semantics"]`
-   - `["test-passes-for-wrong-reason", "hardcoded-default-value"]`
-
-   Tokens should be stable across phrasings of the same concern. Do NOT include
-   agent names, file paths, or line numbers in the tokens.
-
-   Attach the token list to each finding as `fingerprint_tokens`. Also derive
-   and attach `file_basename` (just the filename, no path). Assign each finding
-   a stable `id` of the form `f_001`, `f_002`, ... in sort order.
-
-   If the Haiku call fails or returns malformed JSON, fall back to an empty
-   token list — findings still post normally; only re-review correlation is
-   degraded.
+Re-review dedup happens via the existing-comment fetch in Step 1 Batch A
+(injected into each agent's prompt as "Do NOT duplicate any of these"). No
+fingerprinting needed — the agents see the prior comments by body and skip
+them.
 
 ## Step 5: Confirm
 
@@ -300,6 +392,10 @@ The good stuff 🗑️✨
 - <positive 2>
 ```
 
+Low-confidence findings have already been dropped by the Step 3.5 filter
+(scored `<80`). The findings you see survived both the confidence filter
+and the merge agent's verify pass.
+
 Use AskUserQuestion with these options:
 
 - **Post all** — post all findings to GitHub (skip if `--casing-the-joint`)
@@ -320,10 +416,10 @@ the Auto Mode Findings emission schema, with `review_id: null`,
 
 Replace the standard preview with the self-review walkthrough.
 
-#### Phase 1: Summary
+#### Phase 1: Show everything
 
-Print a compact summary instead of the full numbered list. Use the persona's
-Review Summary Voice for tone (positives, opener phrasing).
+Print the full findings list — all findings visible at once, in importance
+order. Use the same format as default mode peer review:
 
 ```
 🪞 Mirror check — PR #<number> (<headRefName>)
@@ -333,52 +429,84 @@ The raccoons found N things. By tier:
 - Design: <count>
 - Clarity: <count>
 - Nits: <count>
+(<count> folded in from Copilot)   ← omit this line if no Copilot comments
 
 The good stuff 🗑️✨
-- <2-3 positives, same as standard preview>
+- <2-3 positives>
 
-<verdict line — same format as default mode>
+<verdict line>
 
-Walking through findings now. For each one: Fix, Skip, or Defer.
-```
-
-Tier counts come from the merge agent's `tier` field on each finding
-(`correctness | design | clarity | nit`). Sum them per tier.
-
-#### Phase 2: Walk through findings
-
-For each finding (in importance order, same sort as default mode):
-
-**First, output the full finding as text** — the engineer must be able to read the finding before being asked to act on it. Do not call AskUserQuestion until the finding is fully displayed:
-
-```
-─── Finding <i> of <N> ─────────────────────────────────
-📍 <file>:<line>
-<tags joined with " · ">
+─── 1 ──────────────────────────────────────────────────
+📍 <file>:<line>  <tags joined with " · ">
 
 <finding body>
 
 Suggested fix:
-<suggestion code, indented two spaces; omit this section if no suggestion>
+<suggestion code, indented two spaces; omit if no suggestion>
+
+─── 2 ──────────────────────────────────────────────────
+📍 <file>:<line>  <tags joined with " · ">
+
+<finding body>
+...
 ```
 
-**Then, after the finding text is visible**, use AskUserQuestion with three options:
+Print ALL findings before asking anything. The engineer reads the full list
+first.
 
-- **Fix** — open the file at the cited line, present the relevant code in the terminal, and walk through the change with the engineer. Conversational edit:
+#### Phase 2: Pick what to act on
+
+After printing all findings, use AskUserQuestion:
+
+> Want to act on any of these?
+
+- **All** — walk through every finding
+- **Pick individually** — quick triage pass: show each finding as a one-liner
+  (`N. file:line — <body truncated to 10 words>`) and ask `Include / Skip`
+  for each. After the pass, confirm which are selected, then start the
+  walkthrough.
+- **None** — skip walkthrough, jump straight to Phase 4 end prompts
+
+#### Phase 3: Walk through selected findings
+
+For each selected finding:
+
+**Print the finding again** (same format as Phase 1) so the engineer doesn't
+have to scroll. Then use AskUserQuestion with these options:
+
+- **Fix** — open the file at the cited line, present the relevant code in the
+  terminal, and walk through the change conversationally:
   - Show the cited code with 5 lines of context above and below
   - Restate the suggestion (or describe the change if no suggestion)
   - Ask the engineer to confirm, propose an alternative, or skip
   - Apply the agreed-upon edit using the Edit tool
   - Confirm the edit and move to the next finding
-- **Explain** — dig into the finding before deciding. Read the file at the cited line with 15-20 lines above and below (15-20 lines above and below), explain what the raccoon(s) flagged and why it matters, show the relevant code path, and surface any additional context from the diff or repo that helps the engineer evaluate. After explaining, re-present the same four options (Fix / Explain / Skip / Defer) so the engineer can decide with full understanding. The engineer may also type freeform questions via "Other" to continue the conversation — keep discussing until they pick an action.
+- **Explain** — read the file at the cited line with 15-20 lines above and
+  below, explain what the raccoon(s) flagged and why it matters, surface any
+  additional context from the diff or repo. After explaining, re-present the
+  same options so the engineer can decide. The engineer may also type freeform
+  questions via "Other" — keep discussing until they pick an action.
 - **Skip** — record `mirror_disposition: "skipped"` for this finding, move on
 - **Defer** — record `mirror_disposition: "deferred"` for this finding, move on
 
-The engineer can also use **Other** to type freeform questions or comments about the finding — respond conversationally, then re-present the options.
+The engineer can also use **Other** to type freeform questions — respond
+conversationally, then re-present the options.
 
-After each finding, increment the counter and present the next one. Track session state (fixed, skipped, deferred counts and which findings are in each bucket).
+**Copilot-backed findings** (`source_comment_ids` non-empty) are backed by a
+real comment thread on the PR, so the actions behave a little differently:
 
-#### Phase 3: End-of-walkthrough prompts
+- **Fix** — after applying the edit, offer to reply `"Fixed."` and resolve each
+  thread in `source_comment_ids` (same reply/resolve mechanic as rummage). For a
+  merged finding (raccoon + Copilot), the raccoon's fix resolves the Copilot
+  thread too.
+- **Defer** — do **not** post a new inline comment in Phase 4; the comment
+  already lives on the PR. Leave the thread as-is.
+- **Skip** — leave the thread untouched.
+
+Track session state (fixed, skipped, deferred counts and which findings are in
+each bucket).
+
+#### Phase 4: End-of-walkthrough prompts
 
 After walking all findings, print the summary:
 
@@ -410,6 +538,9 @@ Use AskUserQuestion:
 If "Post": run Step 6's posting logic on the deferred findings only, with the
 review body summarizing only the deferred items (e.g., "🪞 Mirror check found
 N things worth deferring."). Other findings (fixed, skipped) are not posted.
+**Exclude Copilot-backed deferred findings** (`source_comment_ids` non-empty)
+from the post set — their comment already exists on the PR; re-posting would
+duplicate it. Leave those threads as-is.
 
 If "Skip": don't post anything. Continue to Prompt 2.
 
@@ -428,7 +559,7 @@ confirmation.
 
 If fixed = 0, skip Prompt 2 entirely.
 
-#### Phase 4: Emit findings JSON
+#### Phase 5: Emit findings JSON
 
 Always emit the findings JSON (per the existing Auto Mode emission rules)
 with the mirror-check fields populated. See Auto Mode section for schema
@@ -528,229 +659,9 @@ findings behavior, closer, tone rules, and verdict lines.
 
 ## Rummage Branch
 
-When `--rummage` is detected, run this pipeline instead of the peer/self Steps 1-6. Rummage processes incoming reviewer feedback through Boss's perspectives, one comment at a time.
+When `--rummage` is detected, **do not run Steps 1-6 above.** Read `rummage.md` instead — it has the full rummage pipeline (gather, comment inventory, interactive walkthrough, wrap-up, reply formatting, findings emission).
 
-Print: *"🦝 Rummage mode — Boss is reading through the feedback."*
-
-### Rummage Step 1: Gather
-
-Run these operations in parallel:
-
-**1. PR metadata** — same as peer/self Batch A item 1.
-
-**2. Diff fetch** — same as peer/self Batch A item 2. Boss needs the full diff to evaluate whether reviewer comments are valid.
-
-**3. Full comment fetch** — fetch all three comment types with full bodies (not truncated):
-
-Inline review comments:
-
-```bash
-gh api repos/{owner}/{repo}/pulls/$ARGUMENTS/comments --paginate
-```
-
-Review-level comments (reviews with bodies):
-
-```bash
-gh api repos/{owner}/{repo}/pulls/$ARGUMENTS/reviews --paginate
-```
-
-Discussion comments (issue-level):
-
-```bash
-gh api repos/{owner}/{repo}/issues/$ARGUMENTS/comments --paginate
-```
-
-**4. Local branch pre-flight** — verify the PR's branch is checked out locally (same check as self branch).
-
-**5. Repo conventions + custom context** — same as peer/self Batch A items 5-6.
-
-After Batch A completes:
-
-**6. Noise reduction + language detection** — same as peer/self Batch B items 7 and 10. Boss needs clean diff and language hints for context. Skip the diff line map (item 8) and size check (item 9) — rummage doesn't post inline review comments. Skip Batch C (blast-radius) — not relevant for feedback processing.
-
-### Rummage Step 3: Build comment inventory
-
-Parse the fetched comments into a structured inventory. For each comment, extract:
-
-- `id` — GitHub comment ID
-- `type` — `inline_review`, `review_body`, or `discussion`
-- `author` — who left it
-- `body` — full comment text
-- `path` — file path (inline only, null for others)
-- `line` — line number (inline only, null for others)
-- `state` — resolved/unresolved (where available)
-- `created_at` — timestamp
-- `in_reply_to` — parent comment ID if this is a thread reply
-
-**Filter to actionable comments:**
-
-- Exclude comments authored by the PR author (you don't need to respond to your own comments)
-- Exclude bot comments (CI bots, linters, automated checks)
-- Exclude comments that are already resolved
-- Exclude comments where the PR author has already replied substantively (not just "done" or "fixed")
-- Group thread replies with their parent — present the full thread as one unit
-
-**Categorize remaining comments:**
-
-- **Blocking** — `CHANGES_REQUESTED` reviews, comments containing "must", "required", "blocking", or "needs to"
-- **Actionable** — suggestions, questions, code review comments with substance
-- **Informational** — approvals, FYI comments, positive feedback
-
-**Sort order:** Blocking first, then actionable, then informational. Within each category, inline comments before review-level before discussion.
-
-Print the inventory summary:
-
-```
-🦝 Found <N> comments to rummage through.
-   Blocking: <count>
-   Actionable: <count>
-   Informational: <count>
-   (Skipped: <count> already addressed)
-```
-
-If zero actionable comments remain after filtering, print: *"🦝 Nothing to rummage through — all feedback is addressed or informational."* and exit.
-
-### Rummage Step 5: Interactive walkthrough
-
-For each comment in the sorted inventory, run this loop:
-
-#### Present the comment and Boss's take
-
-**First, output the comment and Boss's perspective as text** — the engineer must be able to read everything before being asked to act. Do not call AskUserQuestion until all of the following is fully displayed.
-
-**Step A: Show the comment:**
-
-```
-─── Comment <i> of <N> (<category>) ──────────────────
-💬 <author> on <path>:<line> (or "PR-level"):
-
-<full comment body>
-
-<thread context if replies exist>
-```
-
-**Step B: Dispatch Boss** — launch one Agent with `model: "opus"` using the Boss Prompt Template from `persona.md`. Pass it:
-
-- The reviewer's comment (full body + thread)
-- Code context (read the file at the commented line, 10 lines above and below)
-- The cleaned diff
-- Language hints
-- Repo CLAUDE.md
-- Custom context (my-context.md)
-
-**Step C: Show Boss's take** — parse Boss's `PERSPECTIVE:` block and print it:
-
-```
-🦝 Boss (channeling <channeled tags>):
-<take>
-
-Recommendation: <recommendation>
-<reasoning>
-```
-
-**Then, after both the comment and Boss's take are visible**, use AskUserQuestion with these options:
-
-- **Fix** — open the file at the cited line, walk through the change conversationally (same as mirror-check's fix flow: show context, propose edit, confirm, apply Edit tool). After fixing, draft a reply comment acknowledging the fix.
-- **Respond** — choose a response type, then draft the reply:
-  - **Discuss** — draft a clarifying question or discussion response. Optionally pull in a specific raccoon for a deeper take: show the channeled tags from Boss's response and ask which raccoon to consult. If the engineer picks one, dispatch that raccoon as a single Agent with the comment + code context, present the deeper take, then redraft the reply.
-  - **Acknowledge** — the reviewer has a point but it's out of scope or a known tradeoff. Draft a response that agrees and explains.
-  - **Decline** — push back respectfully. Boss's take informs the pushback. Draft a response explaining why the current approach is preferred.
-- **Explain** — dig into the comment and Boss's take before deciding. Read the file at the commented line with 15-20 lines above and below, explain what the reviewer is asking and why Boss channeled the perspectives it did, surface any additional context from the diff or repo. After explaining, re-present the same options so the engineer can decide with full understanding. The engineer may also type freeform questions via "Other" to continue the conversation.
-- **Skip** — move on, handle later.
-
-The engineer can also use **Other** to type freeform questions or comments — respond conversationally, then re-present the options.
-
-For Fix and all Respond sub-types: show the draft reply and use AskUserQuestion:
-
-- **Post** — post the reply to GitHub immediately
-- **Edit** — engineer provides changes, re-present, ask again
-- **Save for later** — save the reply, post all at the end
-
-#### Track progress
-
-For each comment, record:
-
-- `disposition` — `fixed`, `discussed`, `acknowledged`, `declined`, `skipped`
-- `reply_draft` — the composed reply text (null if skipped)
-- `reply_posted` — whether the reply was posted immediately
-- `file_edited` — whether a file was changed (fix only)
-
-### Rummage Step 6: Wrap up
-
-After all comments are walked, print the summary:
-
-```
-🦝 Rummage complete.
-
-  Fixed: <count>
-  Discussed: <count>
-  Acknowledged: <count>
-  Declined: <count>
-  Skipped: <count>
-```
-
-**Prompt 1: Unposted replies** (only if any replies were saved for later)
-
-> Post <N> saved replies now?
-
-Use AskUserQuestion:
-
-- **Post all** — post each saved reply to the appropriate GitHub comment thread
-- **Review first** — show each saved reply, let the engineer edit/post/discard one at a time
-- **Discard** — don't post any
-
-**Prompt 2: Commit disposition** (only if any files were edited)
-
-Same as mirror-check's Prompt 2:
-
-> You fixed <N> comments. What about the changes?
-
-- **Leave as-is** — don't touch git
-- **Stage only** — `git add` the changed files
-- **Commit** — stage and commit with message: `Address reviewer feedback (N fixes)`
-
-### Rummage reply formatting
-
-Replies posted by rummage mode should sound like the engineer, not like a raccoon. No emoji tags, no raccoon personality in the posted reply. The raccoons advise privately — the public response is professional.
-
-Keep replies concise:
-
-- **Fix:** "Good catch — fixed in <sha or 'latest push'>." or "Fixed, thanks." If the fix was non-obvious, briefly explain what changed.
-- **Discuss:** The clarifying question, written directly.
-- **Acknowledge:** "Agreed — tracking this separately in <ticket/issue>." or "Good point, though I think it's out of scope for this PR because <reason>."
-- **Decline:** "I considered this, but <reason the current approach is preferred>. Happy to discuss further."
-
-### Rummage findings emission
-
-After the walkthrough, write a rummage-specific JSON to `/tmp/raccoons-rummage-<repo>-<pr>.json`:
-
-```json
-{
-  "repo": "mikasa",
-  "number": 12345,
-  "head_sha": "abc123",
-  "branch": "rummage",
-  "rummaged_at": "2026-04-17T14:30:00Z",
-  "comments_total": 12,
-  "comments_filtered": 8,
-  "comments": [
-    {
-      "github_comment_id": 123456,
-      "type": "inline_review",
-      "author": "reviewer-name",
-      "path": "app/services/foo.rb",
-      "line": 42,
-      "body": "...",
-      "category": "blocking",
-      "disposition": "fixed",
-      "channeled": ["🌪️ Chaos Carol", "🥃 Cranky Hank"],
-      "recommendation": "fix",
-      "reply_posted": true,
-      "file_edited": true
-    }
-  ]
-}
-```
+Rummage is fundamentally different from peer/self: it fetches reviewer comments instead of dispatching the squad, uses Boss to channel perspectives per comment, and skips triage, the confidence filter, and merge entirely.
 
 ## Auto Mode
 
@@ -762,7 +673,7 @@ When auto mode is requested, run the review without human confirmation:
 - Emit findings JSON for the caller (see below)
 - Return the review URL to the caller
 
-Auto mode uses tiered dispatch (same as interactive). Every finding gets posted.
+Auto mode uses smart dispatch (same as interactive). Every finding gets posted.
 
 ### How auto mode is signaled
 
@@ -772,9 +683,9 @@ carry mode flags. Auto mode is signaled by **the invoking context only**:
 
 - **Caller is a watcher skill.** The watcher invokes this skill with
   `args: "<pr-number>"` and includes "run in auto mode" (and optionally a
-  pinned dispatch tier) in the invocation message it sends after the Skill
-  call. If you see "auto mode" in the invocation context, run auto mode
-  regardless of `$ARGUMENTS`.
+  pinned squad) in the invocation message it sends after the Skill call. If
+  you see "auto mode" in the invocation context, run auto mode regardless of
+  `$ARGUMENTS`.
 - **User passes `--auto` themselves on the command line.** Claude Code may
   surface this as a separate hint in the invocation context (not inside
   `$ARGUMENTS`). Treat it the same way.
@@ -783,23 +694,22 @@ If `$ARGUMENTS` looks like it contains anything beyond a bare PR number
 (e.g., `"6928 --auto"`), trim it to the leading integer and warn the user
 that flags-in-args don't work — then proceed.
 
-### Pinned dispatch tier
+### Pinned squad
 
-When a watcher skill invokes this skill for a re-review, it pins the dispatch
-tier to whatever was used on the original review (so the same agent squad runs
-both times — otherwise correlation fights agent diversity). The pin is
-communicated as part of the invocation context.
+When a watcher skill invokes this skill for a re-review, it pins the squad
+to whatever ran on the original review (so the same agents run both times —
+otherwise correlation fights agent diversity). The pin is a list of raccoon
+slugs communicated as part of the invocation context.
 
-When you see a pinned tier in your invocation context:
+When you see a pinned squad in your invocation context:
 
-- **Skip Step 2 (Triage classification)** — do not call the triage agent for
-  the change-type classification
-- Use the pinned tier directly to select the agent squad in Step 3
+- **Skip Step 2 (Triage classification)** — do not call the triage agent
+- Use the pinned squad list directly in Step 3
 - Blast-radius runs in Step 1 Batch C as usual (based on signature detection
-  in the diff, not triage classification) — no special handling needed
+  in the diff) — no special handling needed
 - Still emit `modified_identifiers` in the findings JSON so the cache stays
   warm for next time
-- Print that triage was skipped due to a pinned re-review tier
+- Print that triage was skipped due to a pinned re-review squad
 
 ### Findings emission
 
@@ -811,7 +721,7 @@ After the review posts, write the parsed structured findings to
   "repo": "mikasa",
   "number": 12345,
   "head_sha": "abc123",
-  "dispatch_tier": "mutative | additive | mechanical",
+  "squad": ["chaos-carol", "the-oracle", "inspector-bandit"],
   "rampage_level": "<flag from persona's rampage levels, or null>",
   "mirror_check": {
     "fixed_count": 3,
@@ -828,17 +738,15 @@ After the review posts, write the parsed structured findings to
   "posted_at": "2026-04-15T18:39:21Z",
   "findings": [
     {
-      "id": "f_001",
       "file": "app/services/foo.rb",
       "line": 42,
-      "file_basename": "foo.rb",
-      "fingerprint_tokens": ["nil-template-identifier", "no-validation"],
       "tags": ["tag1", "tag2"],
       "body": "...",
       "suggestion": "next unless client",
       "mirror_disposition": "fixed",
       "posted_inline": false,
-      "comment_id": null
+      "comment_id": null,
+      "source_comment_ids": []
     }
   ]
 }
@@ -852,6 +760,10 @@ After the review posts, write the parsed structured findings to
   inline comments on re-review.
 - `review_id` is the GitHub review object ID (numeric), used by callers that
   want to fetch the review's comments later.
+- `squad` is the list of raccoon slugs that actually ran for this review
+  (from triage's output, from `--full-rampage`, or from a pinned squad on
+  re-review). Callers cache this to pin the same squad on subsequent
+  re-reviews.
 - `modified_identifiers` is populated from the Step 1 Batch C signature scan
   when blast-radius ran, from triage when it didn't skip, or `[]` when neither
   applied. Callers may cache this for use in subsequent re-reviews.
@@ -859,6 +771,9 @@ After the review posts, write the parsed structured findings to
   summarizes the walkthrough outcomes. `deferred_posted` is true if Prompt 1
   was answered "Post". `fixes_committed` reflects Prompt 2's answer
   (`"committed"`, `"staged"`, or `"none"`); `"none"` if fixed_count was 0.
+- `source_comment_ids` is the list of GitHub Copilot comment IDs folded into a
+  finding (mirror-check only), or `[]` for pure raccoon findings. On a fixed
+  Copilot-backed finding, the thread reply/resolve happened in Phase 3.
 - `mirror_disposition` is `null` for non-mirror-check sessions or for
   findings not yet processed. In a mirror-check session, every finding gets
   exactly one of `"fixed"`, `"skipped"`, or `"deferred"`. For deferred

@@ -1,63 +1,58 @@
 # Rampaging Raccoons
 
-Multi-perspective PR review skill for [Claude Code](https://claude.com/claude-code). Triage classifies the change, dispatches a tiered squad of raccoon agents in parallel — each with a distinct personality and focus area — merges and deduplicates their findings, and posts one unified GitHub review with inline comments.
+Multi-perspective PR review skill for [Claude Code](https://claude.com/claude-code) with three modes: **peer review** (dispatch the squad, post one unified GitHub review), **self review** (walk findings interactively, fix in place), and **rummage** (process incoming reviewer feedback through Boss, respond comment by comment).
 
 ## The raccoons
 
 | Character | Focus |
 |-----------|-------|
-| 🥒 **Nit Pickles**<br>*"Not to be that raccoon, but..."* | Style, inconsistency, dead code, leftover TODOs |
+| 🥒 **Nit Pickles**<br>*"Not to be that raccoon, but..."* | Style, inconsistency, dead code, leftover TODOs — *and* clarity nits (self-explaining names, magic values, confusing control flow, missing *why* context) |
 | 🌪️ **Chaos Carol**<br>*"Now here's where it gets fun."* | Edge cases, error handling, security, data integrity, distributed-system semantics |
 | 🥃 **Cranky Hank**<br>*"Sure, fine — but at what cost?"* | Cost/benefit — over/under-engineering, pattern violations, dependency coupling, realistic-scale performance |
-| 🔦 **Lil' Whiskers**<br>*"My flashlight can't find the why here."* | Clarity, self-explaining names, confusing control flow, implicit assumptions |
 | 🔮 **The Oracle**<br>*"I've seen how this ends."* | Agentic-first maintainability — PR/commit context, durable repo knowledge, potentially catastrophic foot-guns |
 | 🚧 **Inspector Bandit**<br>*"Something doesn't add up here."* | PR description vs diff alignment, scope, missing pieces |
-| 📟 **Nosy**<br>*"Okay, it's 3am, the alert fires. What do I see?"* | Observability — the 3am test, logs, traces, error context, alerts |
+| 🔍 **Gumshoe**<br>*"What evidence did we actually collect — and what's it costing us?"* | Observability both directions — logs, traces, error context to debug it; plus Datadog cost (log volume, metric cardinality) |
 | 🧪 **Squinty**<br>*"So much green, so little confidence."* | Tests-as-code — does this test prove what it claims? |
+| 🦝 **Boss**<br>*"I've heard all seven of them. Here's what matters."* | Rummage mode only — channels the squad's perspectives on incoming reviewer feedback without dispatching them |
 
-## Tiered dispatch
+## Smart dispatch
 
-A fast Haiku triage pass classifies the change before the rampage begins, so the squad scales to the work:
+A fast Haiku triage pass reads the diff and picks which raccoons should review it — floor of 2, ceiling of all 7. No fixed change-type table; the dispatcher matches what's actually in the diff to who will produce useful findings. A mutative auth change pulls in Carol/Oracle/Gumshoe; a pure rename pulls in just Carol/Bandit; a test-only PR pulls in Squinty/Oracle. Override with `--full-rampage` to deploy everyone regardless.
 
-| Change type | Raccoons dispatched |
-|-------------|---------------------|
-| Mutative (changes existing behavior) | All 8 — full rampage, plus a blast-radius scan for downstream callers |
-| Additive (new code only) | Chaos Carol, The Oracle, Inspector Bandit, Cranky Hank, Nosy, Squinty |
-| Mechanical (renames, formatting, moves) | Chaos Carol, Inspector Bandit |
+A blast-radius scan runs separately whenever modified signatures are detected in the diff — independent of dispatch.
 
 ## Rampage levels
 
-Squad selection. Override the default triage with a named squad. Levels are combinable — the union of all selected squads is dispatched.
+Squad override (peer and self modes only). The default is for triage to pick the squad. Use `--full-rampage` to skip triage and deploy everyone. Rummage mode ignores levels entirely.
 
 | Flag | Squad | When to use |
 |------|-------|-------------|
-| `--full-rampage` | All 8 | Maximum scrutiny regardless of triage |
-| `--bomb-sniffer` | Chaos Carol, Inspector Bandit | Quick check — does it break anything? |
-| `--trash-compactor` | Nit Pickles, Cranky Hank, Lil' Whiskers, Squinty | Code quality pass — style, architecture, clarity, tests |
-| `--night-shift` | Chaos Carol, The Oracle, Nosy | The 3am crew — will this page someone? |
+| `--full-rampage` | All 7 | Maximum scrutiny regardless of triage |
 
 ## Rampage types
 
-Session modifiers. Change what happens with the findings after merge. A type combines with any level (or no level). The two types are **mutually exclusive** — one is for scouting, the other for fixing.
+Session modifiers. Change what happens with the findings — or replace the review pipeline entirely. Types are **mutually exclusive**.
 
 | Flag | Behavior |
 |------|----------|
 | `--casing-the-joint` | Dry run — findings shown in terminal, nothing posted to GitHub |
-| `--mirror-check` | Self-review your own PR — walks findings interactively (fix / skip / defer each), ends with commit + post-deferred prompts. Requires PR's branch checked out locally. |
+| `--mirror-check` | Self-review your own PR — walks findings interactively (fix / skip / defer each), ends with commit + post-deferred prompts. Existing Copilot comments are folded into the same walkthrough (merged with overlapping raccoon findings). Requires PR's branch checked out locally. |
+| `--rummage` | Process incoming reviewer feedback (human **and** Copilot) — Boss channels raccoon perspectives per comment, you decide fix / respond / explain / skip. Replies posted in your voice, not raccoon voice. Requires PR's branch checked out locally. |
 
-Combine a level with a type:
+Examples:
 
 ```text
-/rampaging-raccoons 1234 --bomb-sniffer
+/rampaging-raccoons 1234
 /rampaging-raccoons 1234 --casing-the-joint
-/rampaging-raccoons 1234 --trash-compactor --night-shift
+/rampaging-raccoons 1234 --full-rampage
 /rampaging-raccoons 1234 --mirror-check
 /rampaging-raccoons 1234 --full-rampage --mirror-check
+/rampaging-raccoons 1234 --rummage
 ```
 
 ## Model usage
 
-All raccoon agents run on **Opus** by default. Triage and fingerprinting use **Haiku**. To override, add `agent-model: sonnet` to `my-context.md` — this forces all agents to Sonnet.
+All review agents (1-7) run on **Sonnet** by default — personas are narrow, prompts are tight, and Sonnet 4.6 holds quality at a fraction of Opus cost. The merge agent and Boss always run on **Opus**. Triage and the confidence filter use **Haiku**. To force review agents to Opus for maximum scrutiny, add `agent-model: opus` to `my-context.md`.
 
 ## Install
 
@@ -90,4 +85,6 @@ Drop a new `.md` file in `agents/` to add a perspective. Remove one to retire it
 
 ## Architecture
 
-The skill is split into three layers: `engine.md` (generic orchestration pipeline — gather, dispatch, merge, post), `persona.md` (raccoon-specific roster, dispatch strategy, prompt template, review voice), and `merge-prompt.md` (dedicated merge agent instructions). `SKILL.md` is a thin entry point that loads them.
+The engine supports three branches — **peer**, **self**, and **rummage** — determined by the type flag. Peer and self share the same 6-step pipeline (gather, triage, dispatch, merge, confirm, post) and differ only in how findings are presented and applied. Rummage is a fundamentally different pipeline: Boss processes reviewer comments one at a time instead of dispatching the squad.
+
+The skill is split into layers: `engine.md` (branch routing and orchestration pipeline), `persona.md` (raccoon roster, dispatch strategy, prompt templates, review voice), `merge-prompt.md` (merge agent instructions), and `triage-prompt.md` (Haiku classification prompt). `SKILL.md` is a thin entry point that loads them.

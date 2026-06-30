@@ -15,7 +15,18 @@ You will receive:
 2. **The cleaned diff** -- the actual code changes for this PR, used to verify
    agent claims.
 3. **Existing review comments** -- comments already posted on this PR. Findings
-   that duplicate these must be stripped.
+   that duplicate these must be stripped. (Note: Copilot comments arrive in
+   input 5 instead, not here — they are folded in, not stripped against.)
+4. **Language hints** -- language-specific review patterns and **false-positive
+   patterns** for the languages detected in this PR. Apply these during claim
+   verification: if a finding matches a documented false-positive pattern, drop
+   it. If a finding conflicts with an established convention in the hints, drop
+   it unless the violation is unambiguous.
+5. **Copilot comments to fold in** (mirror-check only; absent otherwise) -- the
+   GitHub Copilot review comments already on this PR, each with its
+   `comment_id`, `path`, `line`, `body`, and any ` ```suggestion ` block. These
+   are **not** stripped — they are merged into the finding set (see step 2.5).
+   When this input is absent, behavior is identical to a normal review.
 
 ## Instructions
 
@@ -38,8 +49,29 @@ If two findings reference the same file and same line (within +/-3 lines) and
 describe the same underlying issue, keep the better-written one. Merge their
 tags (e.g., `🌪️ Chaos Carol · 🔮 The Oracle`).
 
-If all 8 raccoons flag the same issue, use:
-`All eight raccoons 🥒🌪️🥃🔦🔮🚧📟🧪`
+If all 7 raccoons flag the same issue, use:
+`All seven raccoons 🥒🌪️🥃🔮🚧🔍🧪`
+
+### 2.5. Fold in Copilot comments (mirror-check only)
+
+Skip this step entirely if input 5 (Copilot comments) is absent or empty.
+
+For each Copilot comment:
+
+- **Overlaps a raccoon finding** (same file, line within +/-3, same underlying
+  issue) → fold it in: append `🤖 Copilot` to that finding's `tags` and add the
+  Copilot `comment_id` to that finding's `source_comment_ids`. Keep the
+  raccoon's body and suggestion — Copilot just co-signs.
+- **No overlap** → emit a standalone finding: `tags: ["🤖 Copilot"]`, body
+  derived from the comment (apply the brevity pass in step 5), `suggestion`
+  taken from the comment's ` ```suggestion ` block if present (else empty),
+  `source_comment_ids: [<comment_id>]`. Assign a tier per step 6's bar — and
+  verify the claim against the diff per step 4 just like any other finding.
+  Drop it if it's a hallucination, a false positive, or a pure nitpick that
+  fails the step-5 quality bar.
+
+Copilot is lower-trust: apply the verify and nit filters at least as hard as
+you do to raccoon findings.
 
 ### 3. Strip existing
 
@@ -58,7 +90,29 @@ actually there.
 - Described behavior opposite to what the code does
 - Referenced lines or constructs not present in the diff
 
-This step is cheap and catches the most common agent failure mode.
+**Verify removal claims.** When a finding says something was "lost," "removed,"
+or "dropped" (a TODO, a comment, a guard, a feature), check the `-` lines in
+the diff for the cited file. If the claimed thing never existed in the removed
+code, drop the finding.
+
+**Defensible naming/style.** For `nit`-tier naming findings, check whether the
+current name has a plausible reason (e.g., object used in list context, naming
+matches surrounding code pattern). If the name is defensible, drop the finding.
+Nits should flag *clear* friction, not *debatable* preferences.
+
+**Correctness tier quality bar.** Before assigning a finding to the
+`correctness` tier, ask: is this failure realistically triggerable in normal
+usage? If it requires a specific sequence of unusual conditions, external system
+failure, or a race condition that would be caught by existing test coverage,
+assign it `design` or `clarity` instead. Reserve `correctness` for bugs a
+typical code path can actually hit.
+
+**Monitoring findings quality bar.** Observability findings must name a
+*specific* failure scenario: which error gets swallowed, what the oncall sees,
+which context is lost. Generic "this could use more logging" findings without a
+concrete failure scenario should be dropped.
+
+This step is cheap and catches the most common agent failure modes.
 
 ### 5. Brevity pass
 
@@ -124,7 +178,8 @@ Return a single JSON object -- no preamble, no explanation, just the JSON:
       "tags": ["🌪️ Chaos Carol", "🔮 The Oracle"],
       "body": "...",
       "suggestion": "...",
-      "tier": "correctness | design | clarity | nit"
+      "tier": "correctness | design | clarity | nit",
+      "source_comment_ids": []
     }
   ],
   "positives": [
@@ -141,6 +196,9 @@ Field notes:
   dedup merging).
 - `tier` is one of: `correctness`, `design`, `clarity`, `nit`.
 - `suggestion` is the concrete code fix if one exists, or an empty string.
+- `source_comment_ids` is the list of GitHub Copilot comment IDs folded into
+  this finding (step 2.5), or `[]` for pure raccoon findings. The walkthrough
+  uses it to reply to / resolve the Copilot thread on Fix.
 - `verdict` is `clean` or `blocking`.
 - `blocking_summary` is a one-line description of the top correctness/security
   finding, or `null` if verdict is `clean`.
@@ -155,7 +213,11 @@ Field notes:
 - **Strip scene-setting.** The reader is on the line. Do not restate what the
   code does before saying what is wrong with it.
 - **Do not add findings.** You are merging and filtering agent output, not
-  generating new findings.
-- **Do not drop findings for being minor.** Nits survive -- they just sort last.
+  generating new findings — the **only** exception is folding in Copilot
+  comments from input 5 (step 2.5), which become findings tagged `🤖 Copilot`.
+- **Filter weak nits aggressively.** A nit earns its place only if it describes
+  clear friction that most engineers would agree on — not a debatable stylistic
+  preference. If a nit could reasonably be pushed back on, drop it. Cap total
+  nit findings at **3 maximum** — if you have more, keep the 3 most impactful.
 - **Output only the JSON object.** No markdown fences, no commentary, no
   preamble.
